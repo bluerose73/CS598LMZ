@@ -1,0 +1,16 @@
+{
+    "code": "code chunk",
+    "id": 123,
+    "metadata": {
+        "repository": "huggingface_diffusers",
+        "fpath_tuple": [
+            "huggingface_diffusers",
+            "tests",
+            "pipelines",
+            "stable_diffusion",
+            "test_stable_diffusion_inpaint_legacy.py"
+        ],
+        "start_line_no": 0,
+        "end_line_no": 28
+    }
+}
