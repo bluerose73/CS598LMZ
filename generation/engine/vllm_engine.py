@@ -9,13 +9,15 @@ def vllm_generate(model: str,
     Generate completions for a list of prompts using the VLLM model.
     """
     vllm = LLM(model)
-    sampling_params = SamplingParams(max_tokens=max_new_tokens, stop=stop)
-    completions = vllm.generate(prompts, sampling_params)
+    sampling_params = SamplingParams(max_tokens=max_new_tokens,
+                                     stop=stop,
+                                     temperature=0)
+    vllm_completions = vllm.generate(prompts, sampling_params)
 
     result = []
-    for completion in completions:
-        result.append(CompletionObject(completion=completion.outputs[0].text,
-                        prompt=completion.prompt,
-                        num_prompt_tokens=len(completion.prompt_token_ids),
-                        num_completion_tokens=len(completion.outputs[0].token_ids)))
-    return completions
+    for vllm_completion in vllm_completions:
+        result.append(CompletionObject(completion=vllm_completion.outputs[0].text,
+                        prompt=vllm_completion.prompt,
+                        num_prompt_tokens=len(vllm_completion.prompt_token_ids),
+                        num_completion_tokens=len(vllm_completion.outputs[0].token_ids)))
+    return result

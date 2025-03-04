@@ -30,7 +30,12 @@ if config["architecture"] == "decoder":
     prompt_list = batch_format_prompt(code_chunks_list,
                                       unfinished_code_with_context_list,
                                       config["prompt-format"])
-    
+    # Print the formatted prompt list for debugging purposes
+    print("Formatted Prompt List:")
+    for i, prompt in enumerate(prompt_list):
+        print(f"Prompt {i + 1}: {prompt}")
+
+
     if config["engine"] == "vllm":
 
         if config["task"] == "line-completion":

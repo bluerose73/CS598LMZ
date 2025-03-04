@@ -4,7 +4,7 @@ architecture: decoder
 # Task: line-completion | api-completion
 #   This parameter determines the stopping criterion for the generation process.
 #   For line-completion, the model will stop after generating a single line of code.
-task: line-completion
+task: api-completion
 
 # Inference engine: vllm | transformers
 #   vLLM is fast, but it doesn't support FiD.

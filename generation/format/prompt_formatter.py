@@ -18,6 +18,10 @@ def format_prompt_qwen_repo_level_completion(unfinished_code: dict, context: lis
         file_content = chunk["code"]
         line = f"<|file_sep|>{file_path}\n{file_content}"
         context_lines.append(line)
+    
+    file_path = "/".join(unfinished_code["metadata"]["fpath_tuple"][1:])
+    file_content = unfinished_code["prompt"]
+    unfinished_code_line = f"<|file_sep|>{file_path}\n{file_content}"
 
-    prompt_str = "\n".join([repo_name_line] + context_lines)
+    prompt_str = "\n".join([repo_name_line] + context_lines + [unfinished_code_line])
     return prompt_str
