@@ -25,3 +25,5 @@ def batch_format_prompt(chunk_list: list[dict], unfinished_code_w_context_list: 
     for unfinished_code_w_context in tqdm(unfinished_code_w_context_list, desc="Formatting prompts"):
         context = [chunk_list[i] for i in unfinished_code_w_context["context"]]
         prompt_strings.append(formatter(unfinished_code_w_context, context))
+    
+    return prompt_strings
