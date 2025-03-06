@@ -171,3 +171,10 @@ cython_debug/
 .pypirc
 
 /data
+
+# Ignore unzipped files in the repositories folder
+prompt-builder/repositories/*
+!prompt-builder/repositories/*.zip
+
+# Ignore the code chunks in the code-chunks folder
+prompt-builder/code-chunks/*
