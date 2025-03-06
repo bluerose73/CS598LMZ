@@ -178,3 +178,4 @@ prompt-builder/repositories/*
 
 # Ignore the code chunks in the code-chunks folder
 prompt-builder/code-chunks/*
+
