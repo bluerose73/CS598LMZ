@@ -94,6 +94,9 @@ def process_all_repos(repo_names, repos_dir, data_schema_dir, window_size, slice
     The output files are named simply as "code-chunks_{repo}.jsonl" and the processed file list is saved
     in the same folder.
     """
+    # Create output directory if it doesn't exist
+    os.makedirs(data_schema_dir, exist_ok=True)
+    
     for repo in repo_names:
         zip_path = os.path.join(repos_dir, f"{repo}.zip")
         extract_dir = os.path.join(repos_dir, repo)
