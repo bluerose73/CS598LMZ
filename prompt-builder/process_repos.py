@@ -3,8 +3,8 @@ import json
 import zipfile
 import argparse
 
-# Allowed file extensions: only process .py, .java, and .md files.
-ALLOWED_EXTENSIONS = ('.py', '.java', '.md')
+# Recommended file extentions:
+# .py, .java, .md
 
 def unzip_repo(zip_path, extract_to):
     """Unzips the repository archive if not already extracted."""
@@ -35,19 +35,28 @@ def sliding_window_chunks(file_path, window_size, slice_size):
             chunks.append((chunk_text, start, end))
     return chunks
 
-def process_repository(repo_dir, repository_name, output_json, window_size, slice_size):
+def process_repository(repo_dir, repository_name, output_json, window_size, slice_size, allowed_extensions=None):
     """
-    Walks through all files in the repository directory, splits text files (only .py, .java, .md)
-    into overlapping code chunks, and writes them as JSON Lines.
+    Walks through all files in the repository directory, splits text files into overlapping code chunks,
+    and writes them as JSON Lines.
     Also writes a separate text file listing the processed file paths.
+    
+    Args:
+        repo_dir: Directory containing the repository
+        repository_name: Name of the repository
+        output_json: Path to write the output JSONL file
+        window_size: Size of the sliding window
+        slice_size: Size of the slice for sliding
+        allowed_extensions: List of file extensions to process (e.g. ['.py', '.java']). If None, defaults to ['.py', '.java', '.md']
     """
+    
     code_chunks = []
-    processed_files = []  # List of relative file paths that were processed.
+    processed_files = []
     chunk_counter = 0
     for root, _, files in os.walk(repo_dir):
         for file in files:
-            # Only process allowed file types.
-            if not file.lower().endswith(ALLOWED_EXTENSIONS):
+            # Only process allowed file types
+            if not file.lower().endswith(tuple(allowed_extensions)):
                 continue
 
             file_path = os.path.join(root, file)
@@ -88,13 +97,18 @@ def process_repository(repo_dir, repository_name, output_json, window_size, slic
             f.write(path + "\n")
     print(f"List of processed files written to {output_txt}")
 
-def process_all_repos(repo_names, repos_dir, data_schema_dir, window_size, slice_size):
+def process_all_repos(repo_names, repos_dir, data_schema_dir, window_size, slice_size, allowed_extensions=None):
     """
     For each repository, unzips it (if needed) and processes its code files into a code-chunks JSONL file.
-    The output files are named simply as "code-chunks_{repo}.jsonl" and the processed file list is saved
-    in the same folder.
+    
+    Args:
+        repo_names: List of repository names to process
+        repos_dir: Directory containing the zip files
+        data_schema_dir: Output directory for code chunks
+        window_size: Size of the sliding window
+        slice_size: Size of the slice for sliding
+        allowed_extensions: List of file extensions to process (e.g. ['.py', '.java']). If None, defaults to ['.py', '.java', '.md']
     """
-    # Create output directory if it doesn't exist
     os.makedirs(data_schema_dir, exist_ok=True)
     
     for repo in repo_names:
@@ -105,11 +119,18 @@ def process_all_repos(repo_names, repos_dir, data_schema_dir, window_size, slice
             unzip_repo(zip_path, extract_dir)
         else:
             print(f"Repository '{repo}' already extracted at {extract_dir}")
-        process_repository(extract_dir, repo, output_json, window_size, slice_size)
+        process_repository(extract_dir, repo, output_json, window_size, slice_size, allowed_extensions)
 
-if __name__ == '__main__':
+def main():
     parser = argparse.ArgumentParser(description="Process repositories into code-chunks files.")
+    parser.add_argument("--extensions", type=str, default=".py,.java,.md",
+                       help="Comma-separated list of file extensions to process (e.g. '.py,.java,.md')")
     args = parser.parse_args()
+
+    # Parse the extensions
+    allowed_extensions = [ext.strip() for ext in args.extensions.split(',') if ext.strip()]
+    # Ensure all extensions start with a dot
+    allowed_extensions = [ext if ext.startswith('.') else f'.{ext}' for ext in allowed_extensions]
 
     repo_names = [
         "Aelysium-Group_rusty-connector",
@@ -134,9 +155,19 @@ if __name__ == '__main__':
         "task_weaver"
     ]
     
-    repos_dir = "repositories"       # Directory where the zip files are stored.
-    data_schema_dir = "code-chunks"    # Output directory for code-chunks and processed-files.
+    repos_dir = "repositories"
+    data_schema_dir = "code-chunks"
     window_size = 20
     slice_size = 2
 
-    process_all_repos(repo_names, repos_dir, data_schema_dir, window_size, slice_size)
+    process_all_repos(
+        repo_names, 
+        repos_dir, 
+        data_schema_dir, 
+        window_size, 
+        slice_size, 
+        allowed_extensions=allowed_extensions
+    )
+
+if __name__ == '__main__':
+    main()

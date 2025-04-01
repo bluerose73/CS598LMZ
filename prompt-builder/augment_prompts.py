@@ -80,19 +80,37 @@ def build_bm25_index(chunks):
         id_map.append(chunk["id"])
     return corpus_tokens, id_map
 
-def retrieve_top_k(query_text, bm25_obj, k=10):
+def retrieve_top_k(query_text, bm25_obj, code_chunks, k=10, exclude_current_file=False, current_fpath_tuple=None):
     """
     Given a query_text and a BM25 object, returns a list of (document index, score)
     for the top k documents (only those with a nonzero score).
+    
+    Args:
+        query_text: The text to search for
+        bm25_obj: BM25 object containing the index
+        code_chunks: List of code chunks to reference metadata
+        k: Number of top results to return
+        exclude_current_file: Whether to exclude chunks from the current file
+        current_fpath_tuple: The current file's path tuple (needed if exclude_current_file is True)
     """
     query_tokens = simple_tokenize(query_text)
     scores = bm25_obj.get_scores(query_tokens)
     idx_score_pairs = list(enumerate(scores))
+    
+    # Filter out current file if needed
+    if exclude_current_file and current_fpath_tuple:
+        filtered_pairs = []
+        for idx, score in idx_score_pairs:
+            chunk_fpath = code_chunks[idx].get("metadata", {}).get("fpath_tuple", [])
+            if chunk_fpath != current_fpath_tuple:
+                filtered_pairs.append((idx, score))
+        idx_score_pairs = filtered_pairs
+
     sorted_pairs = sorted(idx_score_pairs, key=operator.itemgetter(1), reverse=True)
     top_k = [(idx, score) for idx, score in sorted_pairs if score > 0][:k]
     return top_k
 
-def augment_prompts_with_context_for_repo(code_chunks_path, prompts, output_path, top_k=10):
+def augment_prompts_with_context_for_repo(code_chunks_path, prompts, output_path, top_k=10, exclude_current_file=False):
     """
     For a given repository, loads its code-chunks file and the corresponding unfinished prompts,
     then uses BM25 to retrieve the top matching code chunks.
@@ -106,18 +124,29 @@ def augment_prompts_with_context_for_repo(code_chunks_path, prompts, output_path
     new_prompts = []
     for prompt_obj in prompts:
         query_text = prompt_obj.get("prompt", "")
-        top_matches = retrieve_top_k(query_text, bm25, k=top_k)
-        # Sort descending by BM25 score.
+        current_fpath_tuple = prompt_obj.get("metadata", {}).get("fpath_tuple")
+        
+        top_matches = retrieve_top_k(
+            query_text, 
+            bm25, 
+            code_chunks,
+            k=top_k,
+            exclude_current_file=exclude_current_file,
+            current_fpath_tuple=current_fpath_tuple
+        )
+        
+        # Sort descending by BM25 score
         top_matches = sorted(top_matches, key=lambda x: x[1], reverse=True)
         context_ids = [id_map[idx] for idx, score in top_matches]
         scores = [score for idx, score in top_matches]
         prompt_obj["context"] = context_ids
         prompt_obj["bm25_scores"] = scores
         new_prompts.append(prompt_obj)
+    
     dump_jsonl(new_prompts, output_path)
     print(f"Augmented prompts written to {output_path}")
 
-def augment_all_repos_prompts(repo_names, data_schema_dir, repo_eval_dir, test_types, output_dir, top_k=10):
+def augment_all_repos_prompts(repo_names, data_schema_dir, repo_eval_dir, test_types, output_dir, top_k=10, exclude_current_file=False):
     """
     For each repository and for each test type, filters unfinished prompts from the corresponding test file
     and augments them using BM25 with the repository's code-chunks file.
@@ -129,18 +158,22 @@ def augment_all_repos_prompts(repo_names, data_schema_dir, repo_eval_dir, test_t
             print(f"Test file {test_filepath} not found. Skipping test type {test_type}.")
             continue
         print(f"Processing test type: {test_type}")
-        # Load prompts from the test file for this test type.
         all_prompts = load_jsonl(test_filepath)
         for i, repo in enumerate(repo_names):
             print(f"Processing repo {i+1}/{len(repo_names)}: {repo}")
-            # Filter prompts that belong to this repository (assuming task_id is formatted as "repo/...")
             repo_prompts = [p for p in all_prompts if p.get("metadata", {}).get("task_id", "").split('/')[0] == repo]
             if not repo_prompts:
                 print(f"No prompts found for repo {repo} using test type {test_type}. Skipping BM25 augmentation for this repo.")
                 continue
             code_chunks_path = os.path.join(data_schema_dir, f"code-chunks_{repo}.jsonl")
             output_path = os.path.join(output_dir, f"unfinished-code-w-context_{repo}_{test_type}_bm25.jsonl")
-            augment_prompts_with_context_for_repo(code_chunks_path, repo_prompts, output_path, top_k)
+            augment_prompts_with_context_for_repo(
+                code_chunks_path, 
+                repo_prompts, 
+                output_path, 
+                top_k=top_k,
+                exclude_current_file=exclude_current_file
+            )
 
 def main():
     parser = argparse.ArgumentParser(description="Augment unfinished prompts with BM25 context per repository for multiple test types.")
@@ -148,6 +181,8 @@ def main():
                         help="Directory containing the RepoEval test files.")
     parser.add_argument("--test_types", type=str, default="api_level.java,api_level.python,line_level.java,line_level.python",
                         help="Comma-separated list of test types to process.")
+    parser.add_argument("--exclude_current_file", action="store_true",
+                        help="Exclude chunks from the current file being processed")
     args = parser.parse_args()
 
     test_types = [t.strip() for t in args.test_types.split(',') if t.strip()]
@@ -179,7 +214,15 @@ def main():
     os.makedirs(output_prompts_dir, exist_ok=True)
     repo_eval_dir = args.repo_eval_dir
 
-    augment_all_repos_prompts(repo_names, data_schema_dir, repo_eval_dir, test_types, output_prompts_dir, top_k=10)
+    augment_all_repos_prompts(
+        repo_names, 
+        data_schema_dir, 
+        repo_eval_dir, 
+        test_types, 
+        output_prompts_dir, 
+        top_k=10,
+        exclude_current_file=args.exclude_current_file
+    )
 
 if __name__ == '__main__':
     main()

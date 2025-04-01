@@ -1,0 +1,4 @@
+BM25: remove user-function/s from the implementation (like file removal)
+
+- Embedding model (similar to RAG) SFR-Embedding-Cod
+- Tree-sitter for functions/class/parsing
