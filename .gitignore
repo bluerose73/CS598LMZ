@@ -179,3 +179,5 @@ prompt-builder/repositories/*
 # Ignore the code chunks in the code-chunks folder
 prompt-builder/code-chunks/*
 
+# Ignore Long-Code Arena Baselines
+/lca-baselines

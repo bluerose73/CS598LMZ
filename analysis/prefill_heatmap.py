@@ -6,10 +6,10 @@ import matplotlib.pyplot as plt
 # Set up the axes labels
 input_tokens = [256, 1024, 4096, 16384]
 new_tokens = [16, 32, 64, 128]
-matrix = np.full((4, 4), np.nan)  # Initialize with NaNs
+matrix = np.full((len(input_tokens), len(new_tokens)), np.nan)  # Initialize with NaNs
 
 # Parse the input file
-with open('run_time_benchmark_result.txt', 'r') as file:
+with open('qwen2-prefill-output.txt', 'r') as file:
     lines = file.readlines()
 
 input_tok = None
@@ -35,4 +35,19 @@ plt.ylabel("Input Tokens")
 plt.title("Percent Prefill Heatmap")
 plt.tight_layout()
 plt.savefig("percent_prefill_heatmap.png", dpi=300)
+plt.close()
+
+# Plot the line chart
+plt.figure(figsize=(8, 6))
+for j, n_tok in enumerate(new_tokens):
+    plt.plot(input_tokens, matrix[:, j], marker='o', label=f"{n_tok} new tokens")
+
+plt.xscale('log')
+plt.xlabel("Input Tokens (log scale)")
+plt.ylabel("Percent Prefill")
+plt.title("Percent Prefill vs. Input Tokens")
+plt.legend(title="New Tokens")
+plt.grid(True)
+plt.tight_layout()
+plt.savefig("percent_prefill_line_chart.png", dpi=300)
 plt.close()

@@ -1,7 +1,8 @@
 from .configuration_qwen2_fid import Qwen2FidDecoderConfig
 from torch import nn
 import torch
-from typing import Tuple, Optional, Callable, Union, List
+from typing import Tuple, Optional, Callable, Union, List, Dict
+import warnings
 from transformers.models.qwen2 import Qwen2Config
 from transformers.models.qwen2.modeling_qwen2 import (eager_attention_forward,
                                                       Qwen2Attention,
@@ -12,12 +13,11 @@ from transformers.models.qwen2.modeling_qwen2 import (eager_attention_forward,
                                                       Qwen2RotaryEmbedding
 )
 from transformers.utils.logging import get_logger
-from transformers.utils.deprecation import deprecate_kwarg
-from transformers.cache_utils import Cache, DynamicCache, StaticCache, SlidingWindowCache
+from transformers.cache_utils import Cache, DynamicCache, StaticCache, SlidingWindowCache, EncoderDecoderCache
 from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
 from transformers.modeling_outputs import BaseModelOutputWithPast, CausalLMOutputWithPast
 from transformers.modeling_attn_mask_utils import AttentionMaskConverter
-from transformers.generation import GenerationMixin
+from transformers.generation import GenerationMixin, GenerationConfig
 
 
 logger = get_logger(__name__)
@@ -56,6 +56,8 @@ class Qwen2CrossAttention(nn.Module):
         past_key_value: Optional[Cache] = None,
         **kwargs,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
+        logger.debug("====== Qwen2CrossAttention forward ====")
+        logger.debug(f"attention_mask.shape = {attention_mask.shape if attention_mask is not None else None}")
         bsz, q_len, _ = hidden_states.size()
         bsz_enc, k_len, _ = encoder_hidden_states.size()
         assert bsz == bsz_enc, "Batch size mismatch between decoder and encoder."
@@ -97,6 +99,7 @@ class Qwen2CrossAttention(nn.Module):
             attention_mask,
             dropout=0.0 if not self.training else self.attention_dropout,
             scaling=self.scaling,
+            is_causal=False,
             **kwargs,
         )
 
@@ -120,6 +123,7 @@ class Qwen2FidDecoderLayer(nn.Module):
     def __init__(self, config: Qwen2FidDecoderConfig, layer_idx: int):
         super().__init__()
         self.hidden_size = config.hidden_size
+        self.layer_idx = layer_idx
 
         # Self-attention from Qwen2 (causal attention)
         self.self_attn = Qwen2Attention(config=config, layer_idx=layer_idx)
@@ -155,6 +159,13 @@ class Qwen2FidDecoderLayer(nn.Module):
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         self_attn_cache, cross_attn_cache = past_key_value if past_key_value is not None else (None, None)
+
+        logger.debug("====== Qwen2FidDecoderLayer forward ======")
+        logger.debug(f"layer_idx {self.layer_idx}")
+        logger.debug(f"hidden_states shape: {hidden_states.shape}")
+        logger.debug(f"encoder_hidden_states shape: {encoder_hidden_states.shape if encoder_hidden_states is not None else None}")
+        logger.debug(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else None}")
+        logger.debug(f"encoder_attention_mask shape: {encoder_attention_mask.shape if encoder_attention_mask is not None else None}")
 
         # ===== Self-Attention Block =====
         residual = hidden_states
@@ -299,8 +310,25 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values, output_attentions
+            attention_mask, inputs_embeds, cache_position, past_key_values[0], output_attentions
         )
+
+        logger.debug("====== Qwen2FidDecoderModel forward ======")
+        if causal_mask is not None:
+            logger.debug(f"causal_mask shape: {causal_mask.shape}")
+        else:
+            logger.debug("causal_mask is None")
+        logger.debug(f"input_embeds shape: {inputs_embeds.shape}")
+
+        if self.config._attn_implementation != "sdpa":
+            raise NotImplementedError(f"encoder attention mask is only tested for sdpa, but current attention is {self.config._attn_implementation}")
+        if encoder_attention_mask is not None:
+            attention_mask_converter = AttentionMaskConverter(is_causal=False)
+            encoder_attention_mask = attention_mask_converter.to_4d(
+                encoder_attention_mask,
+                query_length=inputs_embeds.shape[1],
+                dtype=inputs_embeds.dtype,
+            )
 
         hidden_states = inputs_embeds
 
@@ -323,6 +351,7 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
                 layer_cache = past_key_values[0]
 
             if self.gradient_checkpointing and self.training:
+                raise NotImplementedError("Gradient checkpointing is not tested for FID layers.")
                 if isinstance(layer, Qwen2FidDecoderLayer):
                     def custom_forward(*inputs):
                         return layer(
@@ -360,7 +389,7 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
                     layer_outputs = layer(
                         hidden_states,
                         encoder_hidden_states=encoder_hidden_states,
-                        attention_mask=attention_mask,
+                        attention_mask=causal_mask,
                         encoder_attention_mask=encoder_attention_mask,
                         position_ids=position_ids,
                         past_key_value=layer_cache,
@@ -588,7 +617,6 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
     def get_decoder(self):
         return self.model
 
-    @deprecate_kwarg("num_logits_to_keep", version="4.50", new_name="logits_to_keep")
     def forward(
         self,
         input_ids: torch.LongTensor = None,
@@ -653,6 +681,10 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
+        logger.debug("====== Qwen2FidDecoderForCausalLM forward ======")
+        logger.debug(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else None}")
+        logger.debug(f"use_cache: {use_cache}")
+
         # Forward pass through the FID decoder model (which expects encoder inputs).
         outputs = self.model(
             input_ids=input_ids,
@@ -695,3 +727,58 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
             hidden_states=outputs.hidden_states,
             attentions=outputs.attentions,
         )
+
+    # Override the method in GenerationMixin, because we use a custom cache
+    def _prepare_cache_for_generation(
+        self,
+        generation_config: GenerationConfig,
+        model_kwargs: Dict,
+        **kwargs
+    ) -> bool:
+        """
+        Prepares the cache for generation (if applicable), given `generate`'s parameterization. If a cache is
+        instantiated, writes it to `model_kwargs`, under the name expected by the model.
+        """
+
+        cache_name = "past_key_values" if "mamba" not in self.__class__.__name__.lower() else "cache_params"
+        requires_cross_attention_cache = (
+            self.config.is_encoder_decoder or model_kwargs.get("encoder_outputs") is not None
+        )
+
+        # Quick escape route 1: if the user specifies a cache, we only need to:
+        # a) check for conflicting `generate` arguments
+        # b) convert to the new cache format (if the user passes a legacy cache and model supports it)
+        user_defined_cache = model_kwargs.get(cache_name)
+        if user_defined_cache is not None:
+            if generation_config.cache_implementation is not None:
+                raise ValueError(
+                    f"Passing both `cache_implementation` (used to initialize certain caches) and `{cache_name}` (a "
+                    "Cache object) is unsupported. Please use only one of the two."
+                )
+            if isinstance(user_defined_cache, tuple) and self._supports_default_dynamic_cache():
+                model_kwargs[cache_name] = (
+                    DynamicCache.from_legacy_cache(user_defined_cache)
+                    if not requires_cross_attention_cache
+                    else EncoderDecoderCache.from_legacy_cache(user_defined_cache)
+                )
+            return
+
+        # Quick escape route 2: if the user specifies no cache is to be used. (conflicting arguments are handled in
+        # `generation_config.validate()`)
+        if generation_config.use_cache is False:
+            return
+
+        # Quick escape route 3: model that only supports legacy caches = nothing to prepare
+        if not self._supports_default_dynamic_cache():
+            if generation_config.cache_implementation is not None:
+                warnings.warn(
+                    "This model does not support `Cache` instances, it only supports the legacy cache format (tuple "
+                    f"of tuples). `cache_implementation` (set to {generation_config.cache_implementation}) will be "
+                    "ignored.",
+                    UserWarning,
+                )
+            return
+
+        # Otherwise we NEED to prepare a cache, based on `generation_config.cache_implementation`
+
+        return (DynamicCache(), DynamicCache())
