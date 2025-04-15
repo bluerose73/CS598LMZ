@@ -733,6 +733,7 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
         self,
         generation_config: GenerationConfig,
         model_kwargs: Dict,
+        *args,
         **kwargs
     ) -> bool:
         """
