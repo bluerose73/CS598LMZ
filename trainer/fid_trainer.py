@@ -8,45 +8,18 @@ from torch import nn
 
 def fid_batch_forward(encoder: Qwen2Model,
                       decoder: Qwen2FidDecoderForCausalLM,
-                      batch: tuple[list[list[list[int]]], list[list[int]]],
-                      pad_token_id: int,
+                      batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[int], list[list[int]]],
                       device: str)-> CausalLMOutputWithPast:
-    import pdb
-    pdb.set_trace()
     
-    encoder_input_ids, decoder_input_ids = batch
-    encoder_context_num = [len(context_list) for context_list in encoder_input_ids]
-    encoder_context_lengths = [
-        [len(context) for context in context_list]
-        for context_list in encoder_input_ids
-    ]
-    
-    # Pad tokens and convert to tensors
-    encoder_input_ids = [
-        torch.Tensor(context, dtype=torch.long)
-        for context_list in encoder_input_ids
-        for context in context_list
-    ]
-    encoder_input_ids = nn.utils.rnn.pad_sequence(
-        encoder_input_ids, batch_first=True, padding_value=pad_token_id,
-        padding_side="right"
-    )
-    encoder_attention_mask = encoder_input_ids.ne(pad_token_id).long()
-    decoder_input_ids = [
-        torch.Tensor(context, dtype=torch.long)
-        for context in decoder_input_ids
-    ]
-    decoder_input_ids = nn.utils.rnn.pad_sequence(
-        decoder_input_ids, batch_first=True, padding_value=pad_token_id,
-        padding_side="left"
-    )
-    decoder_attention_mask = decoder_input_ids.ne(pad_token_id).long()
+    (encoder_input_ids, encoder_attention_mask,
+     decoder_input_ids, decoder_attention_mask,
+     encoder_context_num, encoder_context_lengths) = batch
 
     # Encoder forward
     encoder_input_ids = encoder_input_ids.to(device)
     encoder_attention_mask = encoder_attention_mask.to(device)
-    encoder_hidden_states = encoder(
-        encoder_input_ids=encoder_input_ids,
+    encoder_hidden_states = encoder.forward(
+        input_ids=encoder_input_ids,
         attention_mask=encoder_attention_mask
     ).last_hidden_state
 
@@ -93,12 +66,10 @@ class FiDLightningModule(L.LightningModule):
     def __init__(self,
                  encoder: Qwen2Model,
                  decoder: Qwen2FidDecoderForCausalLM,
-                 tokenizer: Qwen2TokenizerFast,
                  lr: float = 1e-4):
         super().__init__()
         self.encoder = encoder
         self.decoder = decoder
-        self.pad_token_id = tokenizer.pad_token_id  # we only need the pad token from the tokenizer
         self.lr = lr
 
         # Freeze decoder parameters except for cross attention
@@ -116,7 +87,6 @@ class FiDLightningModule(L.LightningModule):
             self.encoder,
             self.decoder,
             batch,
-            self.pad_token_id,
             self.device
         )
         loss = outputs.loss
@@ -129,7 +99,6 @@ class FiDLightningModule(L.LightningModule):
             self.encoder,
             self.decoder,
             batch,
-            self.pad_token_id,
             self.device
         )
         val_loss = outputs.loss

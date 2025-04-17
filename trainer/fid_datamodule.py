@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 from torch.utils.data import Dataset, DataLoader, random_split
 from transformers import PreTrainedTokenizerBase
 from .types import CodeChunk, CodeToComplete
@@ -30,6 +31,8 @@ class FidTrainingDataset(Dataset):
                  tokenized_data_save_dir: str | None = None,
                  encoder_max_tokens: int = 24576,
                  decoder_max_tokens: int = 8192,
+                 max_context_num: int = 12,
+                 max_context_length: int = 2048,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter()):
         """
@@ -55,6 +58,8 @@ class FidTrainingDataset(Dataset):
         logger.info(f"tokenized_data_save_dir: {tokenized_data_save_dir}")
         logger.info(f"encoder_max_tokens: {encoder_max_tokens}")
         logger.info(f"decoder_max_tokens: {decoder_max_tokens}")
+        logger.info(f"max_context_num: {max_context_num}")
+        logger.info(f"max_context_length: {max_context_length}")
         logger.info(f"code_chunk_formatter: {code_chunk_formatter.__class__.__name__}")
         logger.info(f"code_to_complete_formatter: {code_to_complete_formatter.__class__.__name__}")
         
@@ -77,6 +82,8 @@ class FidTrainingDataset(Dataset):
                 tokenizer,
                 encoder_max_tokens,
                 decoder_max_tokens,
+                max_context_num,
+                max_context_length,
                 code_chunk_formatter,
                 code_to_complete_formatter
             )
@@ -159,6 +166,8 @@ class FidTrainingDataset(Dataset):
             tokenizer: PreTrainedTokenizerBase,
             encoder_max_tokens: int,
             decoder_max_tokens: int,
+            max_context_num: int,
+            max_context_length: int,
             code_chunk_formatter: BaseCodeChunkFormatter,
             code_to_complete_formatter: BaseCodeToCompleteFormatter) -> tuple[list[list[int]], list[int]]:
         encoder_input_ids_list = []
@@ -168,15 +177,21 @@ class FidTrainingDataset(Dataset):
             # Encoder input IDs and attention mask
             num_encoder_tokens = 0
             encoder_input_ids = []
-            for c in code.context:
+            for i, c in enumerate(code.context):
+                if i >= max_context_num:
+                    break  # Limit the number of contexts to max_context_num
+
                 context_code_chunk = code_chunks[c]
                 context_code_chunk_str = code_chunk_formatter(context_code_chunk)
-                context_code_chunk_input_ids = tokenizer(context_code_chunk_str, truncation=True, max_length=encoder_max_tokens)['input_ids']
+                context_code_chunk_input_ids = tokenizer(
+                    context_code_chunk_str, truncation=True, max_length=max_context_length
+                )['input_ids']  # Limit individual context length to max_context_length
+
                 num_encoder_tokens += len(context_code_chunk_input_ids)
                 encoder_input_ids.append(context_code_chunk_input_ids)
-                
+
                 if num_encoder_tokens > encoder_max_tokens:
-                    # truncate last context and break
+                    # Truncate the last context to fit within encoder_max_tokens
                     encoder_input_ids[-1] = encoder_input_ids[-1][:encoder_max_tokens - (num_encoder_tokens - len(context_code_chunk_input_ids))]
                     break
             
@@ -184,7 +199,9 @@ class FidTrainingDataset(Dataset):
 
             # Decoder input IDs and attention mask
             code_to_complete_str = code_to_complete_formatter(code)
-            decoder_input_ids = tokenizer(code_to_complete_str, truncation=True, max_length=decoder_max_tokens)['input_ids']
+            decoder_input_ids = tokenizer(
+                code_to_complete_str, truncation=True, max_length=decoder_max_tokens
+            )['input_ids']
             decoder_input_ids_list.append(decoder_input_ids)
         
         return encoder_input_ids_list, decoder_input_ids_list
@@ -199,13 +216,70 @@ class FidTrainingDataset(Dataset):
         return encoder_input_ids, decoder_input_ids
 
 
+class FidDataCollator:
+    def __init__(self, pad_token_id: int):
+        self.pad_token_id = pad_token_id
+
+    def __call__(self, batch: list[tuple[list[list[int]], list[int]]]) -> tuple[
+            torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[int], list[int]]:
+        """
+        Returns:
+        - encoder_input_ids: torch.Tensor - Padded encoder input IDs.
+        - encoder_attention_mask: torch.Tensor - Attention mask for the encoder.
+        - decoder_input_ids: torch.Tensor - Padded decoder input IDs.
+        - decoder_attention_mask: torch.Tensor - Attention mask for the decoder.
+        - encoder_context_num: list[int] - Number of contexts for each sample.
+        - encoder_context_lengths: list[list[int]] - Lengths of each context for each sample without padding.
+        """
+        # import pdb
+        # pdb.set_trace()
+        encoder_input_ids, decoder_input_ids = zip(*batch)
+
+        encoder_context_num = [len(context_list) for context_list in encoder_input_ids]
+        encoder_context_lengths = [
+            len(context)
+            for context_list in encoder_input_ids
+            for context in context_list
+        ]
+        
+        # Pad tokens and convert to tensors
+        encoder_input_ids = [
+            torch.tensor(context, dtype=torch.long)
+            for context_list in encoder_input_ids
+            for context in context_list
+        ]
+        encoder_input_ids = nn.utils.rnn.pad_sequence(
+            encoder_input_ids, batch_first=True, padding_value=self.pad_token_id,
+            padding_side="right"
+        )
+        encoder_attention_mask = encoder_input_ids.ne(self.pad_token_id).long()
+        decoder_input_ids = [
+            torch.tensor(context, dtype=torch.long)
+            for context in decoder_input_ids
+        ]
+        decoder_input_ids = nn.utils.rnn.pad_sequence(
+            decoder_input_ids, batch_first=True, padding_value=self.pad_token_id,
+            padding_side="left"
+        )
+        decoder_attention_mask = decoder_input_ids.ne(self.pad_token_id).long()
+        
+        return (
+            encoder_input_ids,
+            encoder_attention_mask,
+            decoder_input_ids,
+            decoder_attention_mask,
+            encoder_context_num,
+            encoder_context_lengths
+        )
+
+
 class FidTrainingDataModule(L.LightningDataModule):
     def __init__(self,
+                 tokenizer: PreTrainedTokenizerBase,
                  code_chunks_dir: str | None = None,
                  code_to_complete_dir: str | None = None,
                  code_chunks_filename_prefix: str = 'code-chunks_',
                  code_to_complete_filename_prefix: str = 'code-to-complete_',
-                 tokenizer: PreTrainedTokenizerBase | None = None,
                  tokenized_data_load_dir: str | None = None,
                  tokenized_data_save_dir: str | None = None,
                  encoder_max_tokens: int = 24576,
@@ -213,7 +287,7 @@ class FidTrainingDataModule(L.LightningDataModule):
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter(),
                  batch_size: int = 32):
-        
+        super().__init__()
         self.dataset_kwargs = {
             'code_chunks_dir': code_chunks_dir,
             'code_to_complete_dir': code_to_complete_dir,
@@ -228,14 +302,20 @@ class FidTrainingDataModule(L.LightningDataModule):
             'code_to_complete_formatter': code_to_complete_formatter
         }
         self.batch_size = batch_size
+        self.pad_token_id = tokenizer.pad_token_id
+
     
     def setup(self, stage: str):
         if stage == "fit":
             self.dataset = FidTrainingDataset(**self.dataset_kwargs)
             self.train_dataset, self.val_dataset = random_split(self.dataset, [int(len(self.dataset) * 0.9), int(len(self.dataset) * 0.1)])
     
+
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
+                          collate_fn=FidDataCollator(self.pad_token_id), num_workers=4)
     
+
     def val_dataloader(self) -> DataLoader:
-        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False)
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
+                          collate_fn=FidDataCollator(self.pad_token_id), num_workers=4)

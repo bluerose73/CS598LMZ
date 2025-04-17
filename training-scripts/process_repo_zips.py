@@ -52,8 +52,8 @@ def main():
                         help="Temporary directory to store unzipped repositories. Default: ./train-data-builder-tmp")
     parser.add_argument('--retriever', default='path-distance',
                         help="Retriever to use for context (now only supports 'path-distance').")
-    parser.add_argument('--n-context', type=int, default=32,
-                        help="Number of retrieved context chunks. Default: 32")
+    parser.add_argument('--n-context', type=int, default=12,
+                        help="Number of retrieved context chunks. Default: 12")
     parser.add_argument('--out-code-chunk-dir', required=True,
                         help="Directory to store output code chunks in jsonl format.")
     parser.add_argument('--out-code-to-complete-dir', required=True,
