@@ -51,7 +51,7 @@ if __name__ == "__main__":
 
 
     context_text = [
-        "import numpy as npy",
+        "import numpy as npy\nimport pandas as pd\nimport matplotlib.pyplot as plt\n",
         "# This document is a test document",
     ]
     unfinished_code_text = "import numpy as"

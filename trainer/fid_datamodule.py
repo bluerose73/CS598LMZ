@@ -6,6 +6,8 @@ from .formatter import BaseCodeChunkFormatter, BaseCodeToCompleteFormatter, Pyth
 import os
 from tqdm import tqdm
 import logging
+import pickle
+import lightning as L
 
 logger = logging.getLogger(__name__)
 
@@ -19,53 +21,97 @@ class FidTrainingDataset(Dataset):
     """
     
     def __init__(self,
-                 code_chunks_dir: str,
-                 code_to_complete_dir: str,
-                 tokenizer: PreTrainedTokenizerBase,
+                 code_chunks_dir: str | None = None,
+                 code_to_complete_dir: str | None = None,
                  code_chunks_filename_prefix: str = 'code-chunks_',
                  code_to_complete_filename_prefix: str = 'code-to-complete_',
+                 tokenizer: PreTrainedTokenizerBase | None = None,
+                 tokenized_data_load_dir: str | None = None,
+                 tokenized_data_save_dir: str | None = None,
                  encoder_max_tokens: int = 24576,
                  decoder_max_tokens: int = 8192,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter()):
+        """
+        You must provide either code_chunks_dir + code_to_complete_dir + tokenizer or tokenized_data_load_dir.
+        If code_chunks_dir + code_to_complete_dir + tokenizer are provided, the dataset will tokenize the data and save it to tokenized_data_save_dir (if provided).
+        If tokenized_data_load_dir is provided, the dataset will load the tokenized data from this directory.
+        If both are provided, the dataset will use the tokenized data from tokenized_data_load_dir.
+        """
+        
         super().__init__()
+
+        if (code_chunks_dir is None or code_to_complete_dir is None or tokenizer is None) and tokenized_data_load_dir is None:
+            raise ValueError("You must provide either code_chunks_dir + code_to_complete_dir or tokenized_data_load_dir.")
+        
 
         logger.info("Initializing FidTrainingDataset with the following parameters:")
         logger.info(f"code_chunks_dir: {code_chunks_dir}")
         logger.info(f"code_to_complete_dir: {code_to_complete_dir}")
-        logger.info(f"tokenizer: {tokenizer.__class__.__name__}")
         logger.info(f"code_chunks_filename_prefix: {code_chunks_filename_prefix}")
         logger.info(f"code_to_complete_filename_prefix: {code_to_complete_filename_prefix}")
+        logger.info(f"tokenizer: {tokenizer.__class__.__name__}")
+        logger.info(f"tokenized_data_load_dir: {tokenized_data_load_dir}")
+        logger.info(f"tokenized_data_save_dir: {tokenized_data_save_dir}")
         logger.info(f"encoder_max_tokens: {encoder_max_tokens}")
         logger.info(f"decoder_max_tokens: {decoder_max_tokens}")
         logger.info(f"code_chunk_formatter: {code_chunk_formatter.__class__.__name__}")
         logger.info(f"code_to_complete_formatter: {code_to_complete_formatter.__class__.__name__}")
         
-
-        code_chunks, code_to_complete = self.load_data(
-            code_chunks_dir,
-            code_to_complete_dir,
-            code_chunks_filename_prefix,
-            code_to_complete_filename_prefix
-        )
-
-        # self.tokenizer = tokenizer
-        # self.encoder_max_tokens = encoder_max_tokens
-        # self.decoder_max_tokens = decoder_max_tokens
+        if tokenized_data_load_dir is not None:
+            if not os.path.exists(tokenized_data_load_dir):
+                raise ValueError(f"tokenized_data_load_dir {tokenized_data_load_dir} does not exist.")
+            self.encoder_input_ids, self.decoder_input_ids = self.load_tokenized_data(tokenized_data_load_dir)
         
-        self.encoder_input_ids, self.decoder_input_ids = self.format_prompt_and_tokenize(
-            code_chunks,
-            code_to_complete,
-            tokenizer,
-            encoder_max_tokens,
-            decoder_max_tokens,
-            code_chunk_formatter,
-            code_to_complete_formatter
-        )
+        else:
+            code_chunks, code_to_complete = self.load_raw_data(
+                code_chunks_dir,
+                code_to_complete_dir,
+                code_chunks_filename_prefix,
+                code_to_complete_filename_prefix
+            )
+            
+            self.encoder_input_ids, self.decoder_input_ids = self.format_prompt_and_tokenize(
+                code_chunks,
+                code_to_complete,
+                tokenizer,
+                encoder_max_tokens,
+                decoder_max_tokens,
+                code_chunk_formatter,
+                code_to_complete_formatter
+            )
+
+            if tokenized_data_save_dir is not None:
+                self.save_tokenized_data(
+                    self.encoder_input_ids,
+                    self.decoder_input_ids,
+                    tokenized_data_save_dir
+                )
 
 
+    def load_tokenized_data(self, tokenized_data_load_dir: str) -> tuple[list[list[int]], list[int]]:
+        with open(os.path.join(tokenized_data_load_dir, 'tokenized_data.pkl'), 'rb') as f:
+            data_dict = pickle.load(f)
+        encoder_input_ids = data_dict['encoder_input_ids']
+        decoder_input_ids = data_dict['decoder_input_ids']
+        return encoder_input_ids, decoder_input_ids
+
+
+    def save_tokenized_data(self, 
+                            encoder_input_ids: list[list[int]],
+                            decoder_input_ids: list[int],
+                            tokenized_data_save_dir: str) -> None:
+        data_dict = {
+            'encoder_input_ids': encoder_input_ids,
+            'decoder_input_ids': decoder_input_ids
+        }
+        if not os.path.exists(tokenized_data_save_dir):
+            os.makedirs(tokenized_data_save_dir)
+        with open(os.path.join(tokenized_data_save_dir, 'tokenized_data.pkl'), 'wb') as f:
+            pickle.dump(data_dict, f)
+        
     
-    def load_data(self, 
+    def load_raw_data(self, 
                   code_chunks_dir: str, 
                   code_to_complete_dir: str, 
                   code_chunks_filename_prefix: str, 
@@ -147,33 +193,46 @@ class FidTrainingDataset(Dataset):
     def __len__(self) -> int:
         return len(self.encoder_input_ids)
     
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[list[list[int]], list[int]]:
         encoder_input_ids = self.encoder_input_ids[idx]
         decoder_input_ids = self.decoder_input_ids[idx]
         return encoder_input_ids, decoder_input_ids
 
 
-class FidTrainingDataModule:
+class FidTrainingDataModule(L.LightningDataModule):
     def __init__(self,
-                 code_chunks_dir: str,
-                 code_to_complete_dir: str,
+                 code_chunks_dir: str | None = None,
+                 code_to_complete_dir: str | None = None,
                  code_chunks_filename_prefix: str = 'code-chunks_',
                  code_to_complete_filename_prefix: str = 'code-to-complete_',
+                 tokenizer: PreTrainedTokenizerBase | None = None,
+                 tokenized_data_load_dir: str | None = None,
+                 tokenized_data_save_dir: str | None = None,
+                 encoder_max_tokens: int = 24576,
+                 decoder_max_tokens: int = 8192,
+                 code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
+                 code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter(),
                  batch_size: int = 32):
-        self.code_chunks_dir = code_chunks_dir
-        self.code_to_complete_dir = code_to_complete_dir
-        self.code_chunks_filename_prefix = code_chunks_filename_prefix
-        self.code_to_complete_filename_prefix = code_to_complete_filename_prefix
+        
+        self.dataset_kwargs = {
+            'code_chunks_dir': code_chunks_dir,
+            'code_to_complete_dir': code_to_complete_dir,
+            'code_chunks_filename_prefix': code_chunks_filename_prefix,
+            'code_to_complete_filename_prefix': code_to_complete_filename_prefix,
+            'tokenizer': tokenizer,
+            'tokenized_data_load_dir': tokenized_data_load_dir,
+            'tokenized_data_save_dir': tokenized_data_save_dir,
+            'encoder_max_tokens': encoder_max_tokens,
+            'decoder_max_tokens': decoder_max_tokens,
+            'code_chunk_formatter': code_chunk_formatter,
+            'code_to_complete_formatter': code_to_complete_formatter
+        }
         self.batch_size = batch_size
     
     def setup(self, stage: str):
-        self.dataset = FidTrainingDataset(
-            code_chunks_dir=self.code_chunks_dir,
-            code_to_complete_dir=self.code_to_complete_dir,
-            code_chunks_filename_prefix=self.code_chunks_filename_prefix,
-            code_to_complete_filename_prefix=self.code_to_complete_filename_prefix
-        )
-        self.train_dataset, self.val_dataset = random_split(self.dataset, [int(len(self.dataset) * 0.9), int(len(self.dataset) * 0.1)])
+        if stage == "fit":
+            self.dataset = FidTrainingDataset(**self.dataset_kwargs)
+            self.train_dataset, self.val_dataset = random_split(self.dataset, [int(len(self.dataset) * 0.9), int(len(self.dataset) * 0.1)])
     
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True)
