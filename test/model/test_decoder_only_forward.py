@@ -25,6 +25,8 @@ fidmodel = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", c
 qwen2model.eval()
 fidmodel.eval()
 
+print_param_names_and_dtypes(fidmodel)
+
 # missing_keys, unexpected_keys = fidmodel.load_state_dict(qwen2model.state_dict(), strict=False)
 # print("loaded state dict")
 # print(f"missing keys: {missing_keys}")
@@ -83,6 +85,8 @@ else:
     print(f"qwen2model logits[0, 1]: {qwen2_output.logits[0, 1, :10]}")
     print(f"fidmodel logits[0, 1] max: {fid_output.logits[0, 1].max()}")
     print(f"qwen2model logits[0, 1] max: {qwen2_output.logits[0, 1].max()}")
+
+exit(0)
 
 qwen2_kv_cache = qwen2_output.past_key_values
 fid_kv_cache = fid_output.past_key_values[0]

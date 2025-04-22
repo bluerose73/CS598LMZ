@@ -151,11 +151,11 @@ class Qwen2FidDecoderLayer(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         past_key_value: Optional[Tuple[Cache, Cache]] = None,  # self and cross attention caches
         output_attentions: Optional[bool] = False,
         use_cache: Optional[bool] = False,
         cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
         self_attn_cache, cross_attn_cache = past_key_value if past_key_value is not None else (None, None)
@@ -289,6 +289,11 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
                 "`use_cache=True` is incompatible with gradient checkpointing. Setting `use_cache=False`."
             )
             use_cache = False
+        
+        if self.gradient_checkpointing and self.training and flash_attn_kwargs:
+            logger.warning_once(
+                "`flash_attn_kwargs` will be ignored with gradient checkpointing."
+            )
 
         if inputs_embeds is None:
             inputs_embeds = self.embed_tokens(input_ids)
@@ -310,7 +315,9 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
             position_ids = cache_position.unsqueeze(0)
 
         causal_mask = self._update_causal_mask(
-            attention_mask, inputs_embeds, cache_position, past_key_values[0], output_attentions
+            attention_mask, inputs_embeds, cache_position,
+            past_key_values[0] if past_key_values is not None else None,
+            output_attentions
         )
 
         logger.debug("====== Qwen2FidDecoderModel forward ======")
@@ -345,25 +352,21 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
 
             # Prepare the appropriate cache for the layer.
             # FID layers expect a tuple of caches; standard layers expect only the self-attention cache.
-            if isinstance(layer, Qwen2FidDecoderLayer):
+            if past_key_values is None:
+                layer_cache = None
+            elif isinstance(layer, Qwen2FidDecoderLayer):
                 layer_cache = past_key_values  # tuple: (self_attention_cache, cross_attention_cache)
             else:
                 layer_cache = past_key_values[0]
 
             if self.gradient_checkpointing and self.training:
-                raise NotImplementedError("Gradient checkpointing is not tested for FID layers.")
                 if isinstance(layer, Qwen2FidDecoderLayer):
-                    def custom_forward(*inputs):
-                        return layer(
-                            *inputs,
-                            encoder_hidden_states=encoder_hidden_states,
-                            encoder_attention_mask=encoder_attention_mask,
-                            **flash_attn_kwargs,
-                        )
                     layer_outputs = self._gradient_checkpointing_func(
-                        custom_forward,
+                        layer.__call__,
                         hidden_states,
+                        encoder_hidden_states,
                         causal_mask,
+                        encoder_attention_mask,
                         position_ids,
                         layer_cache,
                         output_attentions,

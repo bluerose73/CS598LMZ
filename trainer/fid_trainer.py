@@ -18,9 +18,10 @@ def fid_batch_forward(encoder: Qwen2Model,
     # Encoder forward
     encoder_input_ids = encoder_input_ids.to(device)
     encoder_attention_mask = encoder_attention_mask.to(device)
-    encoder_hidden_states = encoder.forward(
+    encoder_hidden_states = encoder(
         input_ids=encoder_input_ids,
-        attention_mask=encoder_attention_mask
+        attention_mask=encoder_attention_mask,
+        use_cache=False,
     ).last_hidden_state
 
     # Concat encoder hidden states
@@ -51,7 +52,7 @@ def fid_batch_forward(encoder: Qwen2Model,
     # Decoder forward
     decoder_input_ids = decoder_input_ids.to(device)
     decoder_attention_mask = decoder_attention_mask.to(device)
-    decoder_outputs = decoder.forward(
+    decoder_outputs = decoder(
         input_ids=decoder_input_ids,
         attention_mask=decoder_attention_mask,
         encoder_hidden_states=encoder_hidden_states,
@@ -68,6 +69,7 @@ class FiDLightningModule(L.LightningModule):
                  decoder: Qwen2FidDecoderForCausalLM,
                  lr: float = 1e-4):
         super().__init__()
+        self.save_hyperparameters(ignore=["encoder", "decoder"])
         self.encoder = encoder
         self.decoder = decoder
         self.lr = lr
@@ -81,8 +83,10 @@ class FiDLightningModule(L.LightningModule):
     
 
     def training_step(self,
-                      batch: tuple[list[list[list[int]]], list[list[int]]],
+                      batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[int], list[list[int]]],
                       batch_idx: int):
+        self.encoder.train()
+        self.decoder.train()
         outputs = fid_batch_forward(
             self.encoder,
             self.decoder,
@@ -90,11 +94,13 @@ class FiDLightningModule(L.LightningModule):
             self.device
         )
         loss = outputs.loss
-        self.log("train_loss", loss, prog_bar=True)
+        self.log("train_loss", loss, prog_bar=True, batch_size=batch[2].size(0))
         return loss
 
 
     def validation_step(self, batch, batch_idx):
+        self.encoder.eval()
+        self.decoder.eval()
         outputs = fid_batch_forward(
             self.encoder,
             self.decoder,
@@ -102,7 +108,7 @@ class FiDLightningModule(L.LightningModule):
             self.device
         )
         val_loss = outputs.loss
-        self.log("val_loss", val_loss, prog_bar=True)
+        self.log("val_loss", val_loss, prog_bar=True, batch_size=batch[2].size(0))
 
 
     def configure_optimizers(self):

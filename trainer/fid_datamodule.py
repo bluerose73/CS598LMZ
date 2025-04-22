@@ -29,9 +29,9 @@ class FidTrainingDataset(Dataset):
                  tokenizer: PreTrainedTokenizerBase | None = None,
                  tokenized_data_load_dir: str | None = None,
                  tokenized_data_save_dir: str | None = None,
-                 encoder_max_tokens: int = 24576,
-                 decoder_max_tokens: int = 8192,
-                 max_context_num: int = 12,
+                 encoder_max_tokens: int = 16384,
+                 decoder_max_tokens: int = 2048,
+                 max_context_num: int = 8,
                  max_context_length: int = 2048,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter()):

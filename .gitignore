@@ -181,3 +181,5 @@ prompt-builder/code-chunks/*
 
 # Ignore Long-Code Arena Baselines
 /lca-baselines
+/wandb-logs
+/lightning_logs
