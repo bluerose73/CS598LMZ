@@ -46,7 +46,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Preprocess zipped GitHub repositories into training data for a code language model."
     )
-    parser.add_argument('--data-dir', required=True,
+    parser.add_argument('--data-dir', default=None,
                         help="Directory containing zip files of GitHub repositories. Naming: <author>_<repositoryname>.zip")
     parser.add_argument('--tmp-dir', default='./train-data-builder-tmp',
                         help="Temporary directory to store unzipped repositories. Default: ./train-data-builder-tmp")
@@ -59,29 +59,48 @@ def main():
     parser.add_argument('--out-code-to-complete-dir', required=True,
                         help="Directory to store output code-to-complete in jsonl format.")
     parser.add_argument('--allowed-extensions', type=str, default='.py,.java,.md',
-                        help="Comma-separated list of file extensions to process (e.g. '.py,.java,.md'). Default: '.py,.java,.md'")
+                        help="Comma-separated list of file extensions to process (e.g. '.py,.java,.md'). Use '*' to allow all extensions. Default: '.py,.java,.md'")
+    parser.add_argument('--unzipped-dir', default=None,
+                        help="Directory containing unzipped GitHub repositories. If provided, these will also be processed.")
     args = parser.parse_args()
 
+    # Ensure at least one of --data-dir or --unzipped-dir is provided.
+    if not args.data_dir and not args.unzipped_dir:
+        raise ValueError("At least one of --data-dir or --unzipped-dir must be provided.")
+
     # Create directories if they do not exist.
-    if os.path.exists(args.tmp_dir):
+    if args.tmp_dir and os.path.exists(args.tmp_dir):
         shutil.rmtree(args.tmp_dir)
     os.makedirs(args.tmp_dir, exist_ok=True)
     os.makedirs(args.out_code_chunk_dir, exist_ok=True)
     os.makedirs(args.out_code_to_complete_dir, exist_ok=True)
 
-    allowed_extensions = args.allowed_extensions.split(',')
-    allowed_extensions = [ext.strip() for ext in allowed_extensions if ext.strip()]
+    # Parse allowed extensions.
+    if args.allowed_extensions == '*':
+        allowed_extensions = None  # Allow all extensions
+        print("All file extensions are allowed.")
+    else:
+        allowed_extensions = args.allowed_extensions.split(',')
+        allowed_extensions = [ext.strip() for ext in allowed_extensions if ext.strip()]
 
     # For now, we only support path-distance retriever.
     if args.retriever != "path-distance":
         raise ValueError("Only 'path-distance' retriever is currently supported.")
     retriever = PathDistanceRetriever()
 
-    # List all zip files in the data directory.
-    zip_files = [f for f in os.listdir(args.data_dir) if f.endswith('.zip')]
+    # List all zip files in the data directory if provided.
+    zip_files = []
+    if args.data_dir:
+        zip_files = [f for f in os.listdir(args.data_dir) if f.endswith('.zip')]
+
+    # If unzipped-dir is provided, list all directories in it.
+    unzipped_dirs = []
+    if args.unzipped_dir:
+        unzipped_dirs = [os.path.join(args.unzipped_dir, d) for d in os.listdir(args.unzipped_dir)
+                         if os.path.isdir(os.path.join(args.unzipped_dir, d))]
 
     # Process each zip file with a progress bar.
-    for zip_file in tqdm(zip_files, desc="Processing repos"):
+    for zip_file in tqdm(zip_files, desc="Processing zipped repos"):
         zip_path = os.path.join(args.data_dir, zip_file)
         # Extract the zip file.
         try:
@@ -106,67 +125,77 @@ def main():
             continue
 
         repo_root = os.path.join(args.tmp_dir, repository)
-        code_chunks = []
-        # Walk through repository files and build code chunks.
-        chunk_id = 0
-        for root, _, files in os.walk(repo_root):
-            for file in files:
-                # Check if the file has an allowed extension.
-                if not any(file.endswith(ext) for ext in allowed_extensions):
-                    continue
-                file_path = os.path.join(root, file)
-                # Get the file path relative to the repository root and split into tuple.
-                rel_path = os.path.relpath(file_path, repo_root)
-                fpath_tuple = rel_path.split(os.sep)
-                try:
-                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-                        code = f.read()
-                except Exception as e:
-                    print(f"Error reading {file_path}: {e}")
-                    continue
-
-                code_chunk = CodeChunk(
-                    code=code,
-                    id=chunk_id,
-                    repository=repository,
-                    fpath_tuple=fpath_tuple,
-                    metadata={}
-                )
-                code_chunks.append(code_chunk)
-                chunk_id += 1
-
-        # Now produce code-to-complete records.
-        code_to_complete_list = []
-        for chunk in code_chunks:
-            # Retrieve context (list of code chunk ids excluding itself).
-            context = retriever.retrieve(chunk, code_chunks, args.n_context)
-            code_to_complete = CodeToComplete(
-                code=chunk.code,
-                context=context,
-                repository=repository,
-                fpath_tuple=chunk.fpath_tuple,
-                metadata={}
-            )
-            code_to_complete_list.append(code_to_complete)
-
-        # Write outputs in jsonl format.
-        zip_name = os.path.splitext(zip_file)[0]  # Remove .zip extension
-        code_chunk_filename = f"code-chunks_{zip_name}.jsonl"
-        code_to_complete_filename = f"code-to-complete_{zip_name}.jsonl"
-
-        out_chunk_path = os.path.join(args.out_code_chunk_dir, code_chunk_filename)
-        out_to_complete_path = os.path.join(args.out_code_to_complete_dir, code_to_complete_filename)
-
-        with open(out_chunk_path, 'w', encoding='utf-8') as f_out:
-            for chunk in code_chunks:
-                f_out.write(chunk.model_dump_json() + "\n")
-
-        with open(out_to_complete_path, 'w', encoding='utf-8') as f_out:
-            for item in code_to_complete_list:
-                f_out.write(item.model_dump_json() + "\n")
+        # Process the repository.
+        process_repository(repo_root, repository, retriever, allowed_extensions, args)
 
         # Clean up: remove the unzipped repository directory.
         shutil.rmtree(repo_root, ignore_errors=True)
+
+    # Process each unzipped repository directory.
+    for repo_root in tqdm(unzipped_dirs, desc="Processing unzipped repos"):
+        repository = os.path.basename(repo_root)
+        process_repository(repo_root, repository, retriever, allowed_extensions, args)
+
+
+def process_repository(repo_root, repository, retriever, allowed_extensions, args):
+    code_chunks = []
+    chunk_id = 0
+    # Walk through repository files and build code chunks.
+    for root, _, files in os.walk(repo_root):
+        for file in files:
+            # Check if the file has an allowed extension.
+            if allowed_extensions and not any(file.endswith(ext) for ext in allowed_extensions):
+                continue
+            file_path = os.path.join(root, file)
+            # Get the file path relative to the repository root and split into tuple.
+            rel_path = os.path.relpath(file_path, repo_root)
+            fpath_tuple = rel_path.split(os.sep)
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    code = f.read()
+            except Exception as e:
+                print(f"Error reading {file_path}: {e}")
+                continue
+
+            code_chunk = CodeChunk(
+                code=code,
+                id=chunk_id,
+                repository=repository,
+                fpath_tuple=fpath_tuple,
+                metadata={}
+            )
+            code_chunks.append(code_chunk)
+            chunk_id += 1
+
+    # Now produce code-to-complete records.
+    code_to_complete_list = []
+    for chunk in code_chunks:
+        # Retrieve context (list of code chunk ids excluding itself).
+        context = retriever.retrieve(chunk, code_chunks, args.n_context)
+        code_to_complete = CodeToComplete(
+            code=chunk.code,
+            context=context,
+            repository=repository,
+            fpath_tuple=chunk.fpath_tuple,
+            metadata={}
+        )
+        code_to_complete_list.append(code_to_complete)
+
+    # Write outputs in jsonl format.
+    repo_name = repository.replace('/', '_')  # Ensure valid filename
+    code_chunk_filename = f"code-chunks_{repo_name}.jsonl"
+    code_to_complete_filename = f"code-to-complete_{repo_name}.jsonl"
+
+    out_chunk_path = os.path.join(args.out_code_chunk_dir, code_chunk_filename)
+    out_to_complete_path = os.path.join(args.out_code_to_complete_dir, code_to_complete_filename)
+
+    with open(out_chunk_path, 'w', encoding='utf-8') as f_out:
+        for chunk in code_chunks:
+            f_out.write(chunk.model_dump_json() + "\n")
+
+    with open(out_to_complete_path, 'w', encoding='utf-8') as f_out:
+        for item in code_to_complete_list:
+            f_out.write(item.model_dump_json() + "\n")
 
 
 if __name__ == "__main__":
