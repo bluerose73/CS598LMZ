@@ -308,12 +308,16 @@ class FidTrainingDataModule(L.LightningDataModule):
     def setup(self, stage: str):
         if stage == "fit":
             self.dataset = FidTrainingDataset(**self.dataset_kwargs)
-            self.train_dataset, self.val_dataset = random_split(self.dataset, [int(len(self.dataset) * 0.9), int(len(self.dataset) * 0.1)])
+            n_total = len(self.dataset)
+            n_train = int(n_total * 0.9)
+            n_val = n_total - n_train  # Ensure the sum matches exactly
+            self.train_dataset, self.val_dataset = random_split(self.dataset, [n_train, n_val])
     
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(self.train_dataset, batch_size=self.batch_size, shuffle=True,
-                          collate_fn=FidDataCollator(self.pad_token_id), num_workers=4)
+                          collate_fn=FidDataCollator(self.pad_token_id), num_workers=4,
+                          drop_last=True)
     
 
     def val_dataloader(self) -> DataLoader:

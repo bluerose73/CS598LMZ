@@ -108,7 +108,7 @@ class FiDLightningModule(L.LightningModule):
             self.device
         )
         val_loss = outputs.loss
-        self.log("val_loss", val_loss, prog_bar=True, batch_size=batch[2].size(0))
+        self.log("val_loss", val_loss, prog_bar=True, batch_size=batch[2].size(0), sync_dist=True)
 
 
     def configure_optimizers(self):

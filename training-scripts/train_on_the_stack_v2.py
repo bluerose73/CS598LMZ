@@ -21,11 +21,11 @@ decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", co
 
 
 tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-0.5B")
-lr = 0.0001
+lr = 0.0005
 
 
 # layers[35].cross_attn_layernorm.weight
-print(f"layers[35].cross_attn_layernorm.weight: {decoder.model.layers[35].cross_attn_layernorm.weight}")
+# print(f"layers[35].cross_attn_layernorm.weight: {decoder.model.layers[35].cross_attn_layernorm.weight}")
 
 
 effective_batch_size = 128
@@ -35,12 +35,12 @@ gradient_accumulation_steps = effective_batch_size // (n_devices * per_device_ba
 print(f"effective_batch_size: {effective_batch_size}, n_devices: {n_devices}, per_device_batch_size: {per_device_batch_size}, gradient_accumulation_steps: {gradient_accumulation_steps}")
 
 logger = WandbLogger(
-    name="train-repoeval-updated",
+    name="train-the-stack-v2-20k",
     save_dir="./wandb-logs",
 )
 
 datamodule = FidTrainingDataModule(
-    tokenized_data_load_dir="./data/repoeval-updated-pathdist/tokenized",
+    tokenized_data_load_dir="/work/nvme/becw/sma2/the-stack-v2-20k/tokenized",
     tokenizer=tokenizer,
     batch_size=8,
 )
@@ -51,9 +51,10 @@ fidmodule = FiDLightningModule(encoder, decoder, lr)
 trainer = L.Trainer(deterministic=True,
                     precision="bf16-mixed",
                     accumulate_grad_batches=gradient_accumulation_steps,
-                    max_epochs=5,
+                    max_epochs=3,
                     logger=logger,
-                    log_every_n_steps=20,
+                    log_every_n_steps=50,
+                    val_check_interval=0.5,
                     # detect_anomaly=True,
 )
 

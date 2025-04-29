@@ -214,6 +214,19 @@ class Qwen2FidDecoderPretrainedModel(Qwen2PreTrainedModel):
     config_class = Qwen2FidDecoderConfig
     _no_split_modules = ["Qwen2FidDecoderLayer", "Qwen2DecoderLayer"]
 
+    def _init_weights(self, module):
+        std = self.config.initializer_range
+        if isinstance(module, nn.Linear):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.bias is not None:
+                module.bias.data.zero_()
+        elif isinstance(module, nn.Embedding):
+            module.weight.data.normal_(mean=0.0, std=std)
+            if module.padding_idx is not None:
+                module.weight.data[module.padding_idx].zero_()
+        elif isinstance(module, Qwen2RMSNorm):
+            module.weight.data.fill_(1.0)
+
 
 
 class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
@@ -268,7 +281,6 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         **flash_attn_kwargs,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
@@ -279,7 +291,6 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         if (input_ids is None) ^ (inputs_embeds is not None):
             raise ValueError("You must specify exactly one of input_ids or inputs_embeds")
@@ -345,7 +356,6 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
 
-        # Loop through each decoder layer.
         for layer in self.layers:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
@@ -432,8 +442,7 @@ class Qwen2FidDecoderModel(Qwen2FidDecoderPretrainedModel):
             hidden_states=all_hidden_states,
             attentions=all_self_attns,
         )
-        return output if return_dict else output.to_tuple()
-
+        return output
 
     def _update_causal_mask(
         self,
@@ -633,7 +642,6 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
         use_cache: Optional[bool] = None,
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
-        return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
         logits_to_keep: Union[int, torch.Tensor] = 0,
         **kwargs,
@@ -662,8 +670,6 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
                 Whether or not to return attentions.
             output_hidden_states (`bool`, *optional*):
                 Whether or not to return hidden states.
-            return_dict (`bool`, *optional*):
-                Whether or not to return a dict.
             cache_position (`torch.LongTensor`, *optional*):
                 Positions to use for caching.
             logits_to_keep (`int` or `torch.Tensor`, *optional*):
@@ -682,7 +688,6 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         use_cache = use_cache if use_cache is not None else self.config.use_cache
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
         logger.debug("====== Qwen2FidDecoderForCausalLM forward ======")
         logger.debug(f"attention_mask shape: {attention_mask.shape if attention_mask is not None else None}")
@@ -700,12 +705,11 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
             cache_position=cache_position,
             **kwargs,
         )
 
-        hidden_states = outputs[0]
+        hidden_states = outputs.last_hidden_state
         # Compute logits for the necessary tokens.
         slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
         logits = self.lm_head(hidden_states[:, slice_indices, :])
@@ -718,10 +722,6 @@ class Qwen2FidDecoderForCausalLM(Qwen2FidDecoderPretrainedModel, GenerationMixin
                 vocab_size=self.config.vocab_size,
                 **kwargs,
             )
-
-        if not return_dict:
-            output = (logits,) + outputs[1:]
-            return (loss,) + output if loss is not None else output
 
         return CausalLMOutputWithPast(
             loss=loss,

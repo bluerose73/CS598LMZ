@@ -5,6 +5,7 @@ import argparse
 from tqdm import tqdm
 from typing import List
 from trainer.types import CodeChunk, CodeToComplete
+import multiprocessing as mp
 
 
 # -------------------------------------------------------------------
@@ -131,10 +132,22 @@ def main():
         # Clean up: remove the unzipped repository directory.
         shutil.rmtree(repo_root, ignore_errors=True)
 
-    # Process each unzipped repository directory.
-    for repo_root in tqdm(unzipped_dirs, desc="Processing unzipped repos"):
-        repository = os.path.basename(repo_root)
-        process_repository(repo_root, repository, retriever, allowed_extensions, args)
+    # -------------------------------------------------------------------
+    # Multiprocessing for unzipped repositories
+    # -------------------------------------------------------------------
+    if unzipped_dirs:
+        # Prepare argument tuples for worker processes.
+        mp_params = [
+            (repo_root, retriever, allowed_extensions, args)
+            for repo_root in unzipped_dirs
+        ]
+        with mp.Pool(processes=min(mp.cpu_count(), len(mp_params))) as pool:
+            for _ in tqdm(
+                pool.imap_unordered(_process_unzipped_repo, mp_params),
+                total=len(mp_params),
+                desc="Processing unzipped repos (mp)"
+            ):
+                pass
 
 
 def process_repository(repo_root, repository, retriever, allowed_extensions, args):
@@ -196,6 +209,15 @@ def process_repository(repo_root, repository, retriever, allowed_extensions, arg
     with open(out_to_complete_path, 'w', encoding='utf-8') as f_out:
         for item in code_to_complete_list:
             f_out.write(item.model_dump_json() + "\n")
+
+
+# -------------------------------------------------------------------
+# Helper for multiprocessing (must be top-level picklable function)
+# -------------------------------------------------------------------
+def _process_unzipped_repo(params):
+    repo_root, retriever, allowed_extensions, args = params
+    repository = os.path.basename(repo_root)
+    process_repository(repo_root, repository, retriever, allowed_extensions, args)
 
 
 if __name__ == "__main__":
