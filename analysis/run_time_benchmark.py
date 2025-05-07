@@ -46,10 +46,10 @@ def run_once(model, device, vocab_size, args):
 
 def main():
     parser = argparse.ArgumentParser(description="Measure prompt prefill vs decoding times for a Causal LM.")
-    parser.add_argument("model", type=str, help="Model name or path (e.g., gpt2)")
-    parser.add_argument("n_input_tokens", type=int, help="Number of input tokens")
-    parser.add_argument("n_new_tokens", type=int, help="Number of new tokens to generate")
-    parser.add_argument("n_run", type=int, help="Number of runs to average")
+    parser.add_argument("--model", type=str, help="Model name or path", default="Qwen/Qwen2.5-Coder-3B")
+    parser.add_argument("--n_input_tokens", type=int, help="Number of input tokens")
+    parser.add_argument("--n_new_tokens", type=int, help="Number of new tokens to generate", default=32)
+    parser.add_argument("--n_run", type=int, help="Number of runs to average", default=5)
     args = parser.parse_args()
 
     # Load the tokenizer and model
