@@ -1,5 +1,5 @@
 import lightning as L
-from model.modular_qwen2_fid import Qwen2FidDecoderForCausalLM
+from fid.model.modular_qwen2_fid import Qwen2FidDecoderForCausalLM
 from transformers.models.qwen2 import Qwen2TokenizerFast, Qwen2Model
 from transformers.modeling_outputs import CausalLMOutputWithPast
 from torch.optim import AdamW
@@ -119,5 +119,11 @@ class FiDLightningModule(L.LightningModule):
             p for p in self.encoder.parameters()
         ]
         optimizer = AdamW(trainable_params, lr=self.lr)
-        return optimizer
+
+        stepping_batches = self.trainer.estimated_stepping_batches
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=stepping_batches, eta_min=1e-5)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
     
