@@ -185,3 +185,4 @@ prompt-builder/code-chunks/*
 /lca-baselines
 /wandb-logs
 /lightning_logs
+/train-data-builder-tmp

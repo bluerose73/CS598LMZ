@@ -1,4 +1,4 @@
-from trainer.fid_datamodule import FidTrainingDataset
+from fid.trainer.fid_datamodule import FidTrainingDataset
 from transformers.models.qwen2 import Qwen2TokenizerFast
 
 tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-3B")

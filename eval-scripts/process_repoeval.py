@@ -1,23 +1,23 @@
+# Perform RAG and build repoeval-updated test dataset
+
 import os
 import zipfile
 import shutil
 import argparse
+import json
 from tqdm import tqdm
 from fid.data_util.types import CodeChunk, CodeToComplete
 from fid.data_util.retriever import PathDistanceRetriever
-import multiprocessing as mp
 
-
-
-# -------------------------------------------------------------------
-# Main preprocessor function
 
 def main():
     parser = argparse.ArgumentParser(
         description="Preprocess zipped GitHub repositories into training data for a code language model."
     )
-    parser.add_argument('--data-dir', default=None,
+    parser.add_argument('--data-dir', required=True,
                         help="Directory containing zip files of GitHub repositories. Naming: <author>_<repositoryname>.zip")
+    parser.add_argument('--jsonl-path', required=True,
+                        help="Path for the input line completion jsonl file from RepoEval-Updated.")
     parser.add_argument('--tmp-dir', default='./train-data-builder-tmp',
                         help="Temporary directory to store unzipped repositories. Default: ./train-data-builder-tmp")
     parser.add_argument('--retriever', default='path-distance',
@@ -30,13 +30,8 @@ def main():
                         help="Directory to store output code-to-complete in jsonl format.")
     parser.add_argument('--allowed-extensions', type=str, default='.py,.java,.md',
                         help="Comma-separated list of file extensions to process (e.g. '.py,.java,.md'). Use '*' to allow all extensions. Default: '.py,.java,.md'")
-    parser.add_argument('--unzipped-dir', default=None,
-                        help="Directory containing unzipped GitHub repositories. If provided, these will also be processed.")
     args = parser.parse_args()
 
-    # Ensure at least one of --data-dir or --unzipped-dir is provided.
-    if not args.data_dir and not args.unzipped_dir:
-        raise ValueError("At least one of --data-dir or --unzipped-dir must be provided.")
 
     # Create directories if they do not exist.
     if args.tmp_dir and os.path.exists(args.tmp_dir):
@@ -58,72 +53,73 @@ def main():
         raise ValueError("Only 'path-distance' retriever is currently supported.")
     retriever = PathDistanceRetriever()
 
-    # List all zip files in the data directory if provided.
-    zip_files = []
-    if args.data_dir:
-        zip_files = [f for f in os.listdir(args.data_dir) if f.endswith('.zip')]
 
-    # If unzipped-dir is provided, list all directories in it.
-    unzipped_dirs = []
-    if args.unzipped_dir:
-        unzipped_dirs = [os.path.join(args.unzipped_dir, d) for d in os.listdir(args.unzipped_dir)
-                         if os.path.isdir(os.path.join(args.unzipped_dir, d))]
+    # Read jsonl file
+    code_to_complete_dict = {}  # repo_name -> list of code_to_complete
+    with open(args.jsonl_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            data = json.loads(line)
+            repository = data['metadata']['task_id'].split('/')[0]
+            code_to_complete = CodeToComplete(
+                code=data['prompt'],
+                context=[],
+                repository=repository,
+                fpath_tuple=data['metadata']['fpath_tuple'][1:],
+                metadata=data['metadata']
+            )
+            del code_to_complete.metadata['fpath_tuple']
+            if repository not in code_to_complete_dict:
+                code_to_complete_dict[repository] = []
+            code_to_complete_dict[repository].append(code_to_complete)
 
-    # Process each zip file with a progress bar.
-    for zip_file in tqdm(zip_files, desc="Processing zipped repos"):
-        zip_path = os.path.join(args.data_dir, zip_file)
+    # RAG
+    for repo_name, code_to_complete_list in code_to_complete_dict.items():
+        print(f"Processing repository: {repo_name}")
+        zip_file = os.path.join(args.data_dir, f"{repo_name}.zip")
+        if not os.path.exists(zip_file):
+            raise ValueError(f"Zip file {zip_file} does not exist.")
+        
         # Extract the zip file.
         try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            with zipfile.ZipFile(zip_file, 'r') as zip_ref:
                 zip_ref.extractall(args.tmp_dir)
         except Exception as e:
             print(f"Error extracting {zip_file}: {e}")
             continue
 
-        # Determine the repository name based on the root directory of the unzipped content.
-        try:
-            extracted_dirs = os.listdir(args.tmp_dir)
-            repository = next(
-                (d for d in extracted_dirs if os.path.isdir(os.path.join(args.tmp_dir, d))),
-                None
-            )
-            if not repository:
-                print(f"Skipping {zip_file} because no valid root directory was found after extraction.")
-                continue
-        except Exception as e:
-            print(f"Error determining repository name for {zip_file}: {e}")
-            continue
-
-        repo_root = os.path.join(args.tmp_dir, repository)
+        subdirs = os.listdir(args.tmp_dir)
+        if len(subdirs) != 2:
+            raise ValueError(f"Expected 2 subdirectories in {args.tmp_dir}, found {len(subdirs)}. Please check the zip file structure.")
+        for subdir in subdirs:
+            if subdir != '__MACOSX':
+                repo_root = os.path.join(args.tmp_dir, subdir)
+                
+        # repo_root = os.path.join(args.tmp_dir, repo_name)
+        # if not os.path.exists(repo_root):
+        #     # Attempt to extract repo_name after the first underscore
+        #     print(f"Repository root {repo_root} not found. Trying to extract after the first underscore.")
+        #     alt_repo_name = repo_name.split('_', 1)[-1] if '_' in repo_name else None
+        #     if alt_repo_name:
+        #         repo_root = os.path.join(args.tmp_dir, alt_repo_name)
+        #     if not os.path.exists(repo_root):
+        #         print(f"Repository root {repo_root} still not found. Trying lowercase.")
+        #         alt_repo_name = alt_repo_name.lower()
+        #         repo_root = os.path.join(args.tmp_dir, alt_repo_name)
+        #         if not os.path.exists(repo_root):
+        #             raise ValueError(f"Repository {repo_root} does not exist after extraction.")
+        
         # Process the repository.
-        process_repository(repo_root, repository, retriever, allowed_extensions, args)
+        process_repository(repo_root, repo_name, code_to_complete_list, retriever, allowed_extensions, args)
 
         # Clean up: remove the unzipped repository directory.
         shutil.rmtree(repo_root, ignore_errors=True)
 
-    # -------------------------------------------------------------------
-    # Multiprocessing for unzipped repositories
-    # -------------------------------------------------------------------
-    if unzipped_dirs:
-        # Prepare argument tuples for worker processes.
-        mp_params = [
-            (repo_root, retriever, allowed_extensions, args)
-            for repo_root in unzipped_dirs
-        ]
-        with mp.Pool(processes=min(mp.cpu_count(), len(mp_params))) as pool:
-            for _ in tqdm(
-                pool.imap_unordered(_process_unzipped_repo, mp_params),
-                total=len(mp_params),
-                desc="Processing unzipped repos (mp)"
-            ):
-                pass
 
-
-def process_repository(repo_root, repository, retriever, allowed_extensions, args):
+def process_repository(repo_root, repository, code_to_complete_list, retriever, allowed_extensions, args):
     code_chunks = []
     chunk_id = 0
     # Walk through repository files and build code chunks.
-    for root, _, files in os.walk(repo_root):
+    for root, _, files in tqdm(os.walk(repo_root), desc="Processing code chunks", unit="file"):
         for file in files:
             # Check if the file has an allowed extension.
             if allowed_extensions and not any(file.endswith(ext) for ext in allowed_extensions):
@@ -150,18 +146,16 @@ def process_repository(repo_root, repository, retriever, allowed_extensions, arg
             chunk_id += 1
 
     # Now produce code-to-complete records.
-    code_to_complete_list = []
-    for chunk in code_chunks:
+    for code_to_complete in tqdm(code_to_complete_list, desc="Retrieval", unit="record"):
         # Retrieve context (list of code chunk ids excluding itself).
-        context = retriever.retrieve(chunk, code_chunks, args.n_context)
-        code_to_complete = CodeToComplete(
-            code=chunk.code,
-            context=context,
+        key_chunk = CodeChunk(
+            code=code_to_complete.code,
+            id=-1,
             repository=repository,
-            fpath_tuple=chunk.fpath_tuple,
-            metadata={}
+            fpath_tuple=code_to_complete.fpath_tuple,
         )
-        code_to_complete_list.append(code_to_complete)
+        context = retriever.retrieve(key_chunk, code_chunks, args.n_context, cross_file=True)
+        code_to_complete.context = context
 
     # Write outputs in jsonl format.
     repo_name = repository.replace('/', '_')  # Ensure valid filename
@@ -178,15 +172,6 @@ def process_repository(repo_root, repository, retriever, allowed_extensions, arg
     with open(out_to_complete_path, 'w', encoding='utf-8') as f_out:
         for item in code_to_complete_list:
             f_out.write(item.model_dump_json() + "\n")
-
-
-# -------------------------------------------------------------------
-# Helper for multiprocessing (must be top-level picklable function)
-# -------------------------------------------------------------------
-def _process_unzipped_repo(params):
-    repo_root, retriever, allowed_extensions, args = params
-    repository = os.path.basename(repo_root)
-    process_repository(repo_root, repository, retriever, allowed_extensions, args)
 
 
 if __name__ == "__main__":

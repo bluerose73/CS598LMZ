@@ -15,7 +15,7 @@ encoder = Qwen2Model.from_pretrained("Qwen/Qwen2.5-Coder-0.5B", torch_dtype="aut
 encoder.gradient_checkpointing_enable()
 # encoder = torch.compile(encoder, fullgraph=True, dynamic=True)
 
-config = Qwen2FidDecoderConfig.from_json_file("./fid/model/config.json")
+config = Qwen2FidDecoderConfig.from_json_file("./fid/model/config-8-layers.json")
 decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", config=config, torch_dtype="auto")
 # decoder = torch.compile(decoder, fullgraph=True, dynamic=True)
 
@@ -35,7 +35,7 @@ gradient_accumulation_steps = effective_batch_size // (n_devices * per_device_ba
 print(f"effective_batch_size: {effective_batch_size}, n_devices: {n_devices}, per_device_batch_size: {per_device_batch_size}, gradient_accumulation_steps: {gradient_accumulation_steps}")
 
 logger = WandbLogger(
-    name="train-the-stack-v2-20k",
+    name="train-the-stack-v2-20k-8-layers",
     save_dir="./wandb-logs",
 )
 lr_monitor = L.pytorch.callbacks.LearningRateMonitor(logging_interval="step")
@@ -52,7 +52,7 @@ fidmodule = FiDLightningModule(encoder, decoder, lr)
 trainer = L.Trainer(deterministic=True,
                     precision="bf16-mixed",
                     accumulate_grad_batches=gradient_accumulation_steps,
-                    max_epochs=3,
+                    max_epochs=2,
                     logger=logger,
                     log_every_n_steps=10,
                     val_check_interval=0.5,
