@@ -12,10 +12,15 @@ def unzip_repo(zip_path, extract_to):
         zf.extractall(extract_to)
     print(f"Extracted {zip_path} to {extract_to}")
 
-def sliding_window_chunks(file_path, window_size, slice_size):
+def sliding_window_chunks(file_path, window_size, step=None):
     """
     Reads the file and returns a list of tuples (chunk_text, start_line, end_line)
-    using a sliding window approach.
+    using a sliding window approach with a specified step size.
+    
+    Args:
+        file_path: Path to the file to process
+        window_size: Size of the sliding window in lines
+        step: Number of lines to slide the window by (default: window_size // 2)
     """
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -25,8 +30,10 @@ def sliding_window_chunks(file_path, window_size, slice_size):
         return []
     
     n = len(lines)
-    # For example, with window_size=20 and slice_size=2, step=10.
-    step = window_size // slice_size if window_size // slice_size > 0 else 1
+    # If step is not specified, default to half the window size
+    if step is None:
+        step = window_size // 2
+    
     chunks = []
     for start in range(0, n, step):
         end = min(n, start + window_size)
@@ -125,6 +132,10 @@ def main():
     parser = argparse.ArgumentParser(description="Process repositories into code-chunks files.")
     parser.add_argument("--extensions", type=str, default=".py,.java,.md",
                        help="Comma-separated list of file extensions to process (e.g. '.py,.java,.md')")
+    parser.add_argument("--window-size", type=int, default=100,
+                       help="Size of the sliding window in lines")
+    parser.add_argument("--step", type=int, default=80,
+                       help="Number of lines to slide the window by")
     args = parser.parse_args()
 
     # Parse the extensions
@@ -156,16 +167,14 @@ def main():
     ]
     
     repos_dir = "repositories"
-    data_schema_dir = "code-chunks"
-    window_size = 20
-    slice_size = 2
+    data_schema_dir = "code-chunks-100"
 
     process_all_repos(
         repo_names, 
         repos_dir, 
         data_schema_dir, 
-        window_size, 
-        slice_size, 
+        args.window_size, 
+        args.step,  # Use step instead of slice_size
         allowed_extensions=allowed_extensions
     )
 
