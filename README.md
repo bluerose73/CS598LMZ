@@ -69,25 +69,49 @@ Large language model based code completion tools have transformed software devel
 
 ## Running the Complete Inference Pipeline
 
-The whole inference pipeline consist 5 stages.
+The whole inference pipeline consist 4 stages.
 
-1. Process (chunk) the repositories
+1. Process (chunk) the repositories and augment prompts with retrieved cross-file context.
 
-2. Retrieve cross-file context
+   See [prompt-builder/readme.md](prompt-builder/readme.md)
 
-3. Tokenize the dataset
+2. Tokenize the dataset
 
-4. Run model generation
+   Take Sliding-Window BM25 as an example, run the following script
+
+   ```bash
+   bash eval-scripts/tokenize_repoeval_bm25.sh
+   ```
+
+3. Run model generation
    
-   In the Reproducing the Result section, you start from this step.
+   In the Reproducing the Result section, you start from this step. See the Reproducing the Result section.
 
-5. Calculate metrics
+4. Calculate metrics
 
    See the Reproducing the Result section.
 
 ## Training the Model
 
-TODO
+The training scripts contain some hard-coded paths and configurations specifically for Delta / DeltaAI. Below is a high-level walkthrough on how to train the model.
+
+1. Download an 16k subset of The Stack V2. You may want to edit the dataset save path in the code.
+
+   ```bash
+   python training-scripts/download-the-stack.py
+   ```
+
+2. Run retrieval using path-distance retriever, and then tokenize the dataset. You may want to edit the paths in the shell script and Python scripts.
+
+   ```bash
+   bash training-scripts/retrieve_and_tokenize_stack_20k.sh
+   ```
+
+3. Start training. You may want to edit the paths in the Python script.
+
+   ```bash
+   python train_on_the_stack_v2.py
+   ```
 
 ## Description of Sub-Directories
 
