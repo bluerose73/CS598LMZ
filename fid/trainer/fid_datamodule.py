@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Sampler
 from transformers import PreTrainedTokenizerBase
 from ..data_util.formatter import BaseCodeChunkFormatter, BaseCodeToCompleteFormatter, PythonCommentCodeChunkFormatter, PythonCommentCodeToCompleteFormatter
 from .dataset import FidTrainingDataset
@@ -50,7 +50,7 @@ class FidDataCollator:
         ]
         decoder_input_ids = nn.utils.rnn.pad_sequence(
             decoder_input_ids, batch_first=True, padding_value=self.pad_token_id,
-            padding_side="left"
+            padding_side="right"
         )
         decoder_attention_mask = decoder_input_ids.ne(self.pad_token_id).long()
         
@@ -77,7 +77,11 @@ class FidTrainingDataModule(L.LightningDataModule):
                  decoder_max_tokens: int = 8192,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter(),
-                 batch_size: int = 32):
+                 post_process_max_context_num: int | None = None,
+                 copy_ratio: float = 0,
+
+                 batch_size: int = 32,
+                 ):
         super().__init__()
         self.dataset_kwargs = {
             'code_chunks_dir': code_chunks_dir,
@@ -90,7 +94,9 @@ class FidTrainingDataModule(L.LightningDataModule):
             'encoder_max_tokens': encoder_max_tokens,
             'decoder_max_tokens': decoder_max_tokens,
             'code_chunk_formatter': code_chunk_formatter,
-            'code_to_complete_formatter': code_to_complete_formatter
+            'code_to_complete_formatter': code_to_complete_formatter,
+            'post_process_max_context_num': post_process_max_context_num,
+            'copy_ratio': copy_ratio,
         }
         self.batch_size = batch_size
         self.pad_token_id = tokenizer.pad_token_id
@@ -98,9 +104,9 @@ class FidTrainingDataModule(L.LightningDataModule):
     
     def setup(self, stage: str):
         if stage == "fit":
-            self.dataset = FidTrainingDataset(**self.dataset_kwargs, copy_ratio=0.5)
+            self.dataset = FidTrainingDataset(**self.dataset_kwargs)
             n_total = len(self.dataset)
-            n_train = int(n_total * 0.9)
+            n_train = int(n_total * 0.95)
             n_val = n_total - n_train  # Ensure the sum matches exactly
             self.train_dataset, self.val_dataset = random_split(self.dataset, [n_train, n_val])
     
@@ -114,3 +120,26 @@ class FidTrainingDataModule(L.LightningDataModule):
     def val_dataloader(self) -> DataLoader:
         return DataLoader(self.val_dataset, batch_size=self.batch_size, shuffle=False,
                           collate_fn=FidDataCollator(self.pad_token_id), num_workers=4)
+
+
+
+
+class RepeatFirstKSampler(Sampler):
+    def __init__(self, k: int, total_length: int):
+        self.k = k
+        self.total_length = total_length
+
+    def __iter__(self):
+        return (i % self.k for i in range(self.total_length))
+
+    def __len__(self):
+        return self.total_length
+
+
+class FidOverfitDataModule(FidTrainingDataModule):
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(self.train_dataset, batch_size=self.batch_size,
+                          sampler=RepeatFirstKSampler(16, 16000),
+                          collate_fn=FidDataCollator(self.pad_token_id), num_workers=4,
+                          drop_last=True)

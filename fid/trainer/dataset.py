@@ -7,6 +7,7 @@ from tqdm import tqdm
 import logging
 import pickle
 import random
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -14,7 +15,11 @@ def load_raw_data(
         code_chunks_dir: str, 
         code_to_complete_dir: str, 
         code_chunks_filename_prefix: str, 
-        code_to_complete_filename_prefix: str) -> tuple[dict[int, CodeChunk], list[CodeToComplete]]:
+        code_to_complete_filename_prefix: str,
+        limit: int | None = None,
+        code_chunk_parser: Callable[[str], CodeChunk] | None = None,
+        code_to_complete_parser: Callable[[str], CodeToComplete] | None = None,
+        ) -> tuple[dict[int, CodeChunk], list[CodeToComplete]]:
     code_chunks = {}
     code_to_complete = []
     context_base_idx = 0  # Base index for the current repository.
@@ -23,6 +28,8 @@ def load_raw_data(
     code_to_complete_files = [f for f in os.listdir(code_to_complete_dir) if f.endswith('.jsonl')]
     if not code_to_complete_files:
         raise ValueError("No JSONL files found in the specified directories.")
+    if limit is not None:
+        code_to_complete_files = code_to_complete_files[:limit]
 
     for filename in tqdm(code_to_complete_files, desc="FidTrainingDataset: Loading files"):
         if not filename.startswith(code_to_complete_filename_prefix):
@@ -36,7 +43,10 @@ def load_raw_data(
 
         with open(os.path.join(code_chunks_dir, code_chunks_filename), 'r') as f:
             for line in f:
-                code_chunk = CodeChunk.model_validate_json(line)
+                if code_chunk_parser is not None:
+                    code_chunk = code_chunk_parser(line)
+                else:
+                    code_chunk = CodeChunk.model_validate_json(line)
 
                 code_chunk.id += context_base_idx
                 next_context_base_idx = max(next_context_base_idx, code_chunk.id + 1)
@@ -44,7 +54,10 @@ def load_raw_data(
 
         with open(os.path.join(code_to_complete_dir, filename), 'r') as f:
             for line in f:
-                code = CodeToComplete.model_validate_json(line)
+                if code_to_complete_parser is not None:
+                    code = code_to_complete_parser(line)
+                else:
+                    code = CodeToComplete.model_validate_json(line)
                 code.context = [c + context_base_idx for c in code.context]
                 code_to_complete.append(code)
     
@@ -123,7 +136,12 @@ class FidTrainingDataset(Dataset):
                  max_context_length: int = 2048,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter(),
-                 copy_ratio: float = 0):
+                 post_process_max_context_num: int | None = None,
+                 copy_ratio: float = 0,
+                 limit: int | None = None,
+                 code_chunk_parser: Callable[[str], CodeChunk] | None = None,
+                 code_to_complete_parser: Callable[[str], CodeToComplete] | None = None,
+                 ):
         """
         You must provide either code_chunks_dir + code_to_complete_dir + tokenizer or tokenized_data_load_dir.
         If code_chunks_dir + code_to_complete_dir + tokenizer are provided, the dataset will tokenize the data and save it to tokenized_data_save_dir (if provided).
@@ -162,7 +180,10 @@ class FidTrainingDataset(Dataset):
                 code_chunks_dir,
                 code_to_complete_dir,
                 code_chunks_filename_prefix,
-                code_to_complete_filename_prefix
+                code_to_complete_filename_prefix,
+                limit,
+                code_chunk_parser=code_chunk_parser,
+                code_to_complete_parser=code_to_complete_parser,
             )
             
             self.encoder_input_ids, self.decoder_input_ids = format_prompt_and_tokenize(
@@ -183,6 +204,12 @@ class FidTrainingDataset(Dataset):
                     self.decoder_input_ids,
                     tokenized_data_save_dir
                 )
+        
+        if post_process_max_context_num is not None:
+            logger.info(f"Post-processing to limit the number of contexts to {post_process_max_context_num}")
+            for i in tqdm(range(len(self.encoder_input_ids)), desc="FidTrainingDataset: Post-processing"):
+                self.encoder_input_ids[i] = self.encoder_input_ids[i][:post_process_max_context_num]
+
         if copy_ratio > 0:
             for encoder_input_ids, decoder_input_ids in tqdm(zip(self.encoder_input_ids, self.decoder_input_ids),
                                                              desc="FidTrainingDataset: Copying decoder input ids to encoder input ids"):
@@ -236,7 +263,10 @@ class FidTestDataset(Dataset):
                  max_context_length: int = 2048,
                  code_chunk_formatter: BaseCodeChunkFormatter = PythonCommentCodeChunkFormatter(),
                  code_to_complete_formatter: BaseCodeToCompleteFormatter = PythonCommentCodeToCompleteFormatter(),
-                 post_process_max_context_num: int | None = None):
+                 post_process_max_context_num: int | None = None,
+                 code_chunk_parser: Callable[[str], CodeChunk] | None = None,
+                 code_to_complete_parser: Callable[[str], CodeToComplete] | None = None,
+                 ):
         """
         You must provide either code_chunks_dir + code_to_complete_dir + tokenizer or tokenized_data_load_dir.
         If code_chunks_dir + code_to_complete_dir + tokenizer are provided, the dataset will tokenize the data and save it to tokenized_data_save_dir (if provided).
@@ -250,7 +280,7 @@ class FidTestDataset(Dataset):
             raise ValueError("You must provide either code_chunks_dir + code_to_complete_dir or tokenized_data_load_dir.")
         
 
-        logger.info("Initializing FidTrainingDataset with the following parameters:")
+        logger.info("Initializing FidTestDataset with the following parameters:")
         logger.info(f"code_chunks_dir: {code_chunks_dir}")
         logger.info(f"code_to_complete_dir: {code_to_complete_dir}")
         logger.info(f"code_chunks_filename_prefix: {code_chunks_filename_prefix}")
@@ -275,7 +305,9 @@ class FidTestDataset(Dataset):
                 code_chunks_dir,
                 code_to_complete_dir,
                 code_chunks_filename_prefix,
-                code_to_complete_filename_prefix
+                code_to_complete_filename_prefix,
+                code_chunk_parser=code_chunk_parser,
+                code_to_complete_parser=code_to_complete_parser,
             )
             
             self.encoder_input_ids, self.decoder_input_ids = format_prompt_and_tokenize(

@@ -25,6 +25,7 @@
   "use_sliding_window": false,
   "vocab_size": 151936,
 
-  "num_cross_attn_layers": 8,
-  "encoder_hidden_size": 896
+  "num_cross_attn_layers": 35,
+  "encoder_hidden_size": 896,
+  "add_cross_attn_layer_norm": false
 }

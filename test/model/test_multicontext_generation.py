@@ -18,10 +18,16 @@ tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-0.5B")
 # model_path = r"/work/hdd/becw/sma2/cs598lmz/wandb-logs/lightning_logs/ahkjym1q/checkpoints/epoch=2-step=4335.ckpt"
 
 # copy model
-model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/1vz75kyi/checkpoints/epoch=2-step=4335.ckpt"
+# model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/1vz75kyi/checkpoints/epoch=2-step=4335.ckpt"
 
 # 8layer model
 # model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/7vhu6kzi/checkpoints/epoch=1-step=2890.ckpt"
+
+# full copy model
+# model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/kzmrg4n9/checkpoints/epoch=2-step=4335.ckpt"
+
+# full copy model batch size 512
+model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/yu821i9m/checkpoints/epoch=9-step=3628.ckpt"
 
 module = FiDLightningModule.load_from_checkpoint(model_path,
     encoder=encoder,
@@ -35,6 +41,7 @@ encoder.eval()
 
 
 sample_context = """
+# fid/trainer/fid_trainer.py
 def fid_generate(encoder: Qwen2Model, decoder: Qwen2FidDecoderForCausalLM,
                  tokenizer: Qwen2TokenizerFast, context_text: list[str],
                  unfinished_code_text: str, max_encoder_tokens=24576,
@@ -70,6 +77,7 @@ def fid_generate(encoder: Qwen2Model, decoder: Qwen2FidDecoderForCausalLM,
 
 
 sample_code_to_complete = """
+# fid/trainer/fid_trainer.py
 def fid_generate(encoder: Qwen2Model, decoder: Qwen2FidDecoderForCausalLM,
                  tokenizer: Qwen2TokenizerFast, context_text: list[str],
                  unfinished_code_text: str, max_encoder_tokens=24576,
@@ -125,5 +133,5 @@ def fid_generate(encoder: Qwen2Model, decoder: Qwen2FidDecoderForCausalLM,
 
 
 with torch.no_grad():
-    result = fid_generate(encoder, decoder, tokenizer, [sample_context], sample_code_to_complete)
+    result = fid_generate(encoder, decoder, tokenizer, [sample_context], sample_code_to_complete, max_new_tokens=128)
 print(result)

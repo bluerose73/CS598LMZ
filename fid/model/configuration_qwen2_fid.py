@@ -12,10 +12,12 @@ class Qwen2FidDecoderConfig(Qwen2Config):
     def __init__(self,
                  num_cross_attn_layers=1,
                  encoder_hidden_size=896,
+                 add_cross_attn_layer_norm=True,
                  **kwargs):
         super().__init__(**kwargs)
         self.num_cross_attn_layers = num_cross_attn_layers
         self.encoder_hidden_size = encoder_hidden_size
+        self.add_cross_attn_layer_norm = add_cross_attn_layer_norm
 
 
 # class Qwen2FidConfig(PretrainedConfig):

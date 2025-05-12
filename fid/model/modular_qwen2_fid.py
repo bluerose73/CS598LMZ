@@ -134,7 +134,8 @@ class Qwen2FidDecoderLayer(nn.Module):
         
         # LayerNorms before each major sub-layer.
         self.input_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
-        self.cross_attn_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
+        if config.add_cross_attn_layer_norm:
+            self.cross_attn_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
         self.post_attention_layernorm = Qwen2RMSNorm(config.hidden_size, eps=config.rms_norm_eps)
 
         if config.sliding_window and config._attn_implementation != "flash_attention_2":
@@ -142,6 +143,8 @@ class Qwen2FidDecoderLayer(nn.Module):
                 f"Sliding Window Attention is enabled but not implemented for `{config._attn_implementation}`; "
                 "unexpected results may be encountered."
             )
+        
+        self.config = config
         
 
     def forward(
@@ -187,7 +190,12 @@ class Qwen2FidDecoderLayer(nn.Module):
         # ===== Cross-Attention Block =====
         if encoder_hidden_states is not None:
             residual = hidden_states
-            normed_hidden_states = self.cross_attn_layernorm(hidden_states)
+
+            if self.config.add_cross_attn_layer_norm:
+                normed_hidden_states = self.cross_attn_layernorm(hidden_states)
+            else:
+                normed_hidden_states = hidden_states
+            
             cross_attn_output, cross_attn_weights = self.cross_attn(
                 hidden_states=normed_hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
@@ -195,7 +203,7 @@ class Qwen2FidDecoderLayer(nn.Module):
                 past_key_value=cross_attn_cache,
                 **kwargs,
             )
-            hidden_states = residual + cross_attn_output
+            hidden_states = residual + 0.2 * cross_attn_output
 
         # ===== MLP (Feed-Forward) Block =====
         residual = hidden_states

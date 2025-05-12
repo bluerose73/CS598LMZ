@@ -9,6 +9,7 @@ from torch import nn
 def fid_batch_forward(encoder: Qwen2Model,
                       decoder: Qwen2FidDecoderForCausalLM,
                       batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, list[int], list[list[int]]],
+                      pad_token_id: int,
                       device: str)-> CausalLMOutputWithPast:
     
     (encoder_input_ids, encoder_attention_mask,
@@ -49,6 +50,10 @@ def fid_batch_forward(encoder: Qwen2Model,
     for i, seq in enumerate(encoder_hidden_states_by_sample):
         cross_attn_mask[i, :seq.size(0)] = 1
 
+    # Replace pad_token_id with -100 in labels
+    labels = decoder_input_ids.clone()
+    labels[labels == pad_token_id] = -100
+
     # Decoder forward
     decoder_input_ids = decoder_input_ids.to(device)
     decoder_attention_mask = decoder_attention_mask.to(device)
@@ -57,7 +62,7 @@ def fid_batch_forward(encoder: Qwen2Model,
         attention_mask=decoder_attention_mask,
         encoder_hidden_states=encoder_hidden_states,
         encoder_attention_mask=cross_attn_mask,
-        labels=decoder_input_ids,
+        labels=labels,  # Use modified labels
         use_cache=False,
     )
     return decoder_outputs
@@ -67,17 +72,20 @@ class FiDLightningModule(L.LightningModule):
     def __init__(self,
                  encoder: Qwen2Model,
                  decoder: Qwen2FidDecoderForCausalLM,
+                 pad_token_id: int,
                  lr: float = 1e-4):
         super().__init__()
         self.save_hyperparameters(ignore=["encoder", "decoder"])
         self.encoder = encoder
         self.decoder = decoder
         self.lr = lr
+        self.pad_token_id = pad_token_id
 
         # Freeze decoder parameters except for cross attention
         for name, param in self.decoder.named_parameters():
             if "cross_attn" in name or "cross_attn_layernorm" in name:
                 param.requires_grad = True  # Keep cross-attention trainable
+                print(f"Trainable decoder parameter: {name}")
             else:
                 param.requires_grad = False  # Freeze everything else
     
@@ -91,6 +99,7 @@ class FiDLightningModule(L.LightningModule):
             self.encoder,
             self.decoder,
             batch,
+            self.pad_token_id,
             self.device
         )
         loss = outputs.loss
@@ -105,6 +114,7 @@ class FiDLightningModule(L.LightningModule):
             self.encoder,
             self.decoder,
             batch,
+            self.pad_token_id,
             self.device
         )
         val_loss = outputs.loss
@@ -121,9 +131,9 @@ class FiDLightningModule(L.LightningModule):
         optimizer = AdamW(trainable_params, lr=self.lr)
 
         stepping_batches = self.trainer.estimated_stepping_batches
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=stepping_batches, eta_min=1e-5)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=stepping_batches, eta_min=0)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
-    
+

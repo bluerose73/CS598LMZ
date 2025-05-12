@@ -21,7 +21,7 @@ decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", co
 
 
 tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-0.5B")
-lr = 0.0005
+lr = 0.0003
 
 
 # layers[35].cross_attn_layernorm.weight
@@ -43,11 +43,13 @@ lr_monitor = L.pytorch.callbacks.LearningRateMonitor(logging_interval="step")
 datamodule = FidTrainingDataModule(
     tokenized_data_load_dir="/work/nvme/becw/sma2/the-stack-v2-20k/tokenized",
     tokenizer=tokenizer,
-    batch_size=8,
+    batch_size=per_device_batch_size,
+    copy_ratio=0.5,
+    # post_process_max_context_num=1,
 )
 
 
-fidmodule = FiDLightningModule(encoder, decoder, lr)
+fidmodule = FiDLightningModule(encoder, decoder, pad_token_id=tokenizer.pad_token_id, lr=lr)
 
 trainer = L.Trainer(deterministic=True,
                     precision="bf16-mixed",
