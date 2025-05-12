@@ -1,3 +1,4 @@
+import argparse
 from fid.trainer.dataset import FidTestDataset
 from fid.generation.generation import qwen2_batch_generate, DecoderTestDataCollator
 from fid.model.modular_qwen2_fid import Qwen2FidDecoderForCausalLM
@@ -8,18 +9,24 @@ import os
 import json
 from tqdm import tqdm
 
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Run Qwen2 generation for RepoEval.")
+parser.add_argument("--input_dir", type=str, required=True, help="Path to the input tokenized data directory.")
+parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory for generated completions.")
+args = parser.parse_args()
 
-output_dir = "./data/repoeval-updated/java/completion"
+output_dir = args.output_dir
 os.makedirs(output_dir, exist_ok=True)
-
 
 decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", torch_dtype="auto", device_map="auto")
 
 tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-3B")
 dataset = FidTestDataset(
     tokenizer=tokenizer,
-    tokenized_data_load_dir="data/repoeval-updated/java/tokenized",
+    tokenized_data_load_dir=args.input_dir,
 )
+
+# Base dataloader
 base_dataloader = DataLoader(
     dataset,
     batch_size=8,
@@ -29,26 +36,20 @@ base_dataloader = DataLoader(
     drop_last=False,
 )
 
-
 output_jsonl_path = os.path.join(output_dir, "qwen2-base-completion.jsonl")
-output_file = open(output_jsonl_path, "w", encoding="utf-8")
+with open(output_jsonl_path, "w", encoding="utf-8") as output_file:
+    with torch.no_grad():
+        for i, batch in enumerate(tqdm(base_dataloader)):
+            completions: list[dict] = qwen2_batch_generate(
+                decoder,
+                tokenizer,
+                batch,
+                "cuda:0",
+            )
+            for completion in completions:
+                output_file.write(json.dumps(completion) + "\n")
 
-with torch.no_grad():
-    for i, batch in enumerate(tqdm(base_dataloader)):
-        completions: list[dict] = qwen2_batch_generate(
-            decoder,
-            tokenizer,
-            batch,
-            "cuda:0",
-        )
-        for completion in completions:
-            output_file.write(json.dumps(completion) + "\n")
-
-output_file.close()
-
-exit(0)
-
-
+# RAG dataloader
 rag_dataloader = DataLoader(
     dataset,
     batch_size=8,
@@ -59,15 +60,14 @@ rag_dataloader = DataLoader(
 )
 
 output_jsonl_path = os.path.join(output_dir, "qwen2-rag-completion.jsonl")
-output_file = open(output_jsonl_path, "w", encoding="utf-8")
-with torch.no_grad():
-    for i, batch in enumerate(tqdm(rag_dataloader)):
-        completions: list[dict] = qwen2_batch_generate(
-            decoder,
-            tokenizer,
-            batch,
-            "cuda:0",
-        )
-        for completion in completions:
-            output_file.write(json.dumps(completion) + "\n")
-output_file.close()
+with open(output_jsonl_path, "w", encoding="utf-8") as output_file:
+    with torch.no_grad():
+        for i, batch in enumerate(tqdm(rag_dataloader)):
+            completions: list[dict] = qwen2_batch_generate(
+                decoder,
+                tokenizer,
+                batch,
+                "cuda:0",
+            )
+            for completion in completions:
+                output_file.write(json.dumps(completion) + "\n")

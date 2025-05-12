@@ -7,16 +7,24 @@ from torch.utils.data import DataLoader
 import torch
 import os
 import json
+import argparse
 from tqdm import tqdm
 
-output_dir = "./data/repoeval-updated/java/completion"
+# Parse command-line arguments
+parser = argparse.ArgumentParser(description="Run Qwen2 generation for RepoEval.")
+parser.add_argument("--input_dir", type=str, required=True, help="Path to the input tokenized data directory.")
+parser.add_argument("--output_dir", type=str, required=True, help="Path to the output directory for generated completions.")
+parser.add_argument("--model_path", type=str, required=True, help="Path to the model checkpoint.")
+args = parser.parse_args()
+
+output_dir = args.output_dir
 os.makedirs(output_dir, exist_ok=True)
 output_jsonl_path = os.path.join(output_dir, "fid-copy-completion.jsonl")
 
-model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/1vz75kyi/checkpoints/epoch=2-step=4335.ckpt"
+model_path = args.model_path
+# model_path = r"/work/nvme/becw/sma2/cs598lmz/wandb-logs/lightning_logs/1vz75kyi/checkpoints/epoch=2-step=4335.ckpt"
 
 encoder = Qwen2Model.from_pretrained("Qwen/Qwen2.5-Coder-0.5B", torch_dtype="auto")
-encoder.gradient_checkpointing_enable()
 
 config = Qwen2FidDecoderConfig.from_json_file("./fid/model/config.json")
 decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", config=config, torch_dtype="auto")
@@ -25,7 +33,7 @@ decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", co
 tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-0.5B")
 dataset = FidTestDataset(
     tokenizer=tokenizer,
-    tokenized_data_load_dir="data/repoeval-updated/java/tokenized",
+    tokenized_data_load_dir=args.input_dir,
     # post_process_max_context_num=2,
 )
 dataloader = DataLoader(
@@ -41,6 +49,7 @@ dataloader = DataLoader(
 module = FiDLightningModule.load_from_checkpoint(model_path,
     encoder=encoder,
     decoder=decoder,
+    pad_token_id=tokenizer.pad_token_id,
 )
 
 

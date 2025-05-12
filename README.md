@@ -1,22 +1,99 @@
-# CS598LMZ
+# Training Fusion-In Decoder for Fast Long-Context Code Completion
+
 Course project for CS598LMZ: Software Quality Assurance with Generative AI at UIUC
 
+Shengjie Ma, Dylan Dunham, Zhijie Chen, Yifan Shen
+
+
+Large language model based code completion tools have transformed software development workflows, offering productivity boosts through intelligent autocompletion. However, these tools face a trade-off between leveraging extensive repository-wide context and maintaining low latency. While decoder-only LLMs such as Qwen2.5-Coder-3B deliver strong performance, inference with long context inevitably increases the latency, due to expensive prefill computations. In addition, their reliance on causal attention limits KV cache reuse. To address this, we extend a decoder-only model into a Fusion-in Decoder. Our approach includes training a lightweight encoder and cross-attention layers together with a frozen decoder, allowing code chunks to be encoded in parallel. Encoder hidden states can also be cached and reused. Experiments on RepoEval-Updated demonstrate that our method significantly reduces prefill latency on long prompts, while showing a completion accuracy gain compared with the in-file baseline.
+
+
+## Reproducing the Result
+
+1. Python environment setup
+
+
+   The code is tested only with Python 3.12 and linux OS.
+
+   Install dependencies by running
+
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+   Add the repository root directory to your python package search path
+
+   ```bash
+   export PYTHONPATH=path/to/bluerose73/cs598lmz
+   ```
+
+2. Download the FiD model checkpoint and tokenized dataset
+
+   Please download in the following Google Drive link. (Google Apps @ Illinois account required.)
+   https://drive.google.com/drive/folders/1fZxPQx8Lq6P8NyI0Zdl_1RCteRuwcqUK?usp=drive_link
+
+3. Run generation
+
+   Below is the script used for the RepoEval-Updated Java task, using Sliding-Window BM25 retriever. To run generation for other settings, please change the input and output dirs.
+
+   ```bash
+   # Run FiD generation.
+   # ~10 minutes on 1xA100
+   python eval-scripts/fid_generate_repoval.py --input_dir data/repoeval-bm25/python/tokenized/ --output_dir data/repoeval-bm25/python/completion --model_path path/to/checkpoint.ckpt
+
+   # Run Qwen2.5-Coder-3B in-file and cross-file baselines generation
+   # ~1 hour on 1xA100
+   python eval-scripts/qwen2_generate_repoval.py --input_dir data/repoeval-bm25/python/tokenized/ --output_dir data/repoeval-bm25/python/completion
+   ```
+
+4. Calculate metrics
+
+   ```bash
+   python eval-scripts/eval_repoeval.py --language python --completion-path data/repoeval-bm25/python/completion/fid-copy-completion.jsonl
+
+   python eval-scripts/eval_repoeval.py --language java --completion-path data/repoeval-bm25/java/completion/fid-copy-completion.jsonl
+   ```
+
+   This will report Exact Match and Edit Similarity.
+
+## Running the Complete Inference Pipeline
+
+The whole inference pipeline consist 5 stages.
+
+1. Process (chunk) the repositories
+
+2. Retrieve cross-file context
+
+3. Tokenize the dataset
+
+4. Run model generation
+   
+   In the Reproducing the Result section, you start from this step.
+
+5. Calculate metrics
+
+   See the Reproducing the Result section.
+
+## Training the Model
+
+TODO
 
 ## Description of Sub-Directories
 
 **Core Directories**
 
-| folder         | description                                               |
-| -------------- | --------------------------------------------------------- |
-| model          | the FiD model class                                       |
-| prompt-builder | build the prompt for repo-level code completion using RAG |
+| folder           | description                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| fid              | a Python package including model architecture, training step, data utils, etc. Not directly runnable, but many scripts in this repository depends on this package. |
+| prompt-builder   | build the prompt for repo-level code completion using RAG                                                                                                          |
+| eval-scripts     | runnable python scripts for evaluation                                                                                                                             |
+| training-scripts | runnable python scripts for training.                                                                                                                              |
 
 
 **Secondary Directories**
 
 | folder     | description                                    |
 | ---------- | ---------------------------------------------- |
-| generation | run inference for decoder-only models          |
 | delta      | scripts for running jobs in NCSA Delta cluster |
 | analysis   | data & latency analysis and visualization      |
 | test       | test scripts                                   |
