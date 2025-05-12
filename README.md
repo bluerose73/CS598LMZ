@@ -32,6 +32,17 @@ Large language model based code completion tools have transformed software devel
    Please download in the following Google Drive link. (Google Apps @ Illinois account required.)
    https://drive.google.com/drive/folders/1fZxPQx8Lq6P8NyI0Zdl_1RCteRuwcqUK?usp=drive_link
 
+   Unzip data.zip and put it under repository root directory. The path will look like this
+
+   ```
+   data/
+   ├── repoeval-bm25      # Sliding-Window BM25
+   ├── repoeval-smart     # TreeSitter-EmbedRAG
+   └── repoeval-updated   # Truncation Path-Distance
+   ```
+
+   Download the FiD model checkpoint `*.ckpt` and put it in a directory you like.
+
 3. Run generation
 
    Below is the script used for the RepoEval-Updated Java task, using Sliding-Window BM25 retriever. To run generation for other settings, please change the input and output dirs.
