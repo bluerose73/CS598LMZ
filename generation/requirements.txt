@@ -1,4 +1,0 @@
-vllm
-transformers
-pytorch
-pydantic
