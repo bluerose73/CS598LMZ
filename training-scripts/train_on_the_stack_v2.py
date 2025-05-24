@@ -1,3 +1,4 @@
+import argparse
 from fid.trainer.fid_datamodule import FidTrainingDataModule
 from fid.trainer.fid_trainer import FiDLightningModule
 import lightning as L
@@ -11,16 +12,24 @@ L.seed_everything(42)
 # TF32 tensor cores
 torch.set_float32_matmul_precision("high")
 
-encoder = Qwen2Model.from_pretrained("Qwen/Qwen2.5-Coder-0.5B", torch_dtype="auto")
+parser = argparse.ArgumentParser()
+parser.add_argument("--decoder_config_path", type=str, default="./fid/model/config.json")
+parser.add_argument("--encoder_model_name_or_path", type=str, default="Qwen/Qwen2.5-Coder-0.5B")
+parser.add_argument("--decoder_model_name_or_path", type=str, default="Qwen/Qwen2.5-Coder-3B")
+parser.add_argument("--wandb_log_dir", type=str, default="./wandb-logs")
+parser.add_argument("--tokenized_data_load_dir", type=str, default="/work/nvme/becw/sma2/the-stack-v2-20k/tokenized")
+args = parser.parse_args()
+
+encoder = Qwen2Model.from_pretrained(args.encoder_model_name_or_path, torch_dtype="auto")
 encoder.gradient_checkpointing_enable()
 # encoder = torch.compile(encoder, fullgraph=True, dynamic=True)
 
-config = Qwen2FidDecoderConfig.from_json_file("./fid/model/config.json")
-decoder = Qwen2FidDecoderForCausalLM.from_pretrained("Qwen/Qwen2.5-Coder-3B", config=config, torch_dtype="auto")
+config = Qwen2FidDecoderConfig.from_json_file(args.decoder_config_path)
+decoder = Qwen2FidDecoderForCausalLM.from_pretrained(args.decoder_model_name_or_path, config=config, torch_dtype="auto")
 # decoder = torch.compile(decoder, fullgraph=True, dynamic=True)
 
 
-tokenizer = Qwen2TokenizerFast.from_pretrained("Qwen/Qwen2.5-Coder-0.5B")
+tokenizer = Qwen2TokenizerFast.from_pretrained(args.encoder_model_name_or_path)
 lr = 0.0003
 
 
@@ -36,12 +45,12 @@ print(f"effective_batch_size: {effective_batch_size}, n_devices: {n_devices}, pe
 
 logger = WandbLogger(
     name="train-the-stack-v2-20k",
-    save_dir="./wandb-logs",
+    save_dir=args.wandb_log_dir,
 )
 lr_monitor = L.pytorch.callbacks.LearningRateMonitor(logging_interval="step")
 
 datamodule = FidTrainingDataModule(
-    tokenized_data_load_dir="/work/nvme/becw/sma2/the-stack-v2-20k/tokenized",
+    tokenized_data_load_dir=args.tokenized_data_load_dir,
     tokenizer=tokenizer,
     batch_size=per_device_batch_size,
     copy_ratio=0.5,

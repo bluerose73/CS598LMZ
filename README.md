@@ -107,10 +107,14 @@ The training scripts contain some hard-coded paths and configurations specifical
    bash training-scripts/retrieve_and_tokenize_stack_20k.sh
    ```
 
-3. Start training. You may want to edit the paths in the Python script.
-
+3. Start training. You can now provide paths and model names as command-line arguments. For example:
    ```bash
-   python train_on_the_stack_v2.py
+   python training-scripts/train_on_the_stack_v2.py \
+       --decoder_config_path ./fid/model/config.json \
+       --encoder_model_name_or_path Qwen/Qwen2.5-Coder-0.5B \
+       --decoder_model_name_or_path Qwen/Qwen2.5-Coder-3B \
+       --wandb_log_dir ./wandb-logs \
+       --tokenized_data_load_dir /path/to/your/tokenized_data
    ```
 
 ## Description of Sub-Directories
